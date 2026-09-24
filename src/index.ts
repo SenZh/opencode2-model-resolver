@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { resolveModelLimit } from "./rules/limits-database.js";
-import { formatSmartModelName, shouldIncludeModel } from "./rules/filter.js";
+import { formatSmartModelName, appendProviderNameToModelName, shouldIncludeModel } from "./rules/filter.js";
 
 function getHomeDir(): string {
   return os.homedir() || process.env.USERPROFILE || process.env.HOME || "";
@@ -60,14 +60,34 @@ export default {
           const cacheDir = getCacheDir();
           if (!fs.existsSync(cacheDir)) return;
 
+          let config: any = null;
+          try {
+            const configPath = path.join(getHomeDir(), ".config", "opencode", "opencode.json");
+            if (fs.existsSync(configPath)) {
+              config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+            }
+          } catch {}
+
           const files = fs.readdirSync(cacheDir).filter(f => f.endsWith("-models.json"));
           for (const file of files) {
             const providerId = file.replace(/-models\.json$/, "");
             const cachedModels = JSON.parse(fs.readFileSync(path.join(cacheDir, file), "utf8"));
             log(`Loading ${cachedModels.length} cached models into [${providerId}]...`);
+
+            const providerObj = config?.provider?.[providerId];
+            const discovery = providerObj?.options?.modelsDiscovery;
+            const shouldAppend = Boolean(discovery?.showProviderName || discovery?.appendProviderName);
+            const providerName = (typeof providerObj?.name === "string" && providerObj.name.trim())
+              ? providerObj.name.trim()
+              : providerId;
+
             for (const m of cachedModels) {
               providers.models.update(providerId, m.id, (modelDef: any) => {
-                modelDef.name = m.name || m.id;
+                let name = m.name || m.id;
+                if (shouldAppend) {
+                  name = appendProviderNameToModelName(name, providerName);
+                }
+                modelDef.name = name;
                 if (m.limit) {
                   modelDef.limit = m.limit;
                 }
@@ -141,6 +161,13 @@ export default {
 
             // 处理模型列表
             const processedModels = [];
+            const shouldAppendProviderName = Boolean(
+              discovery.showProviderName || discovery.appendProviderName
+            );
+            const providerName = (typeof provider.name === "string" && provider.name.trim())
+              ? provider.name.trim()
+              : providerId;
+
             for (const raw of rawModels) {
               const modelId = raw.id;
               if (!modelId) continue;
@@ -151,9 +178,13 @@ export default {
               }
 
               // 展示名
-              const name = discovery.smartModelName !== false
+              let name = discovery.smartModelName !== false
                 ? formatSmartModelName(modelId)
                 : modelId;
+
+              if (shouldAppendProviderName) {
+                name = appendProviderNameToModelName(name, providerName);
+              }
 
               // 推断 limits
               const limitResult = resolveModelLimit(

@@ -21,6 +21,14 @@ export interface ProviderTarget {
   defaultLimit?: Partial<ModelLimit>;
   include?: string[];
   exclude?: string[];
+  /**
+   * 是否在模型展示名称后追加 (providerName)
+   */
+  showProviderName?: boolean;
+  /**
+   * showProviderName 的别名
+   */
+  appendProviderName?: boolean;
 }
 
 export interface PluginOptions {
@@ -61,6 +69,17 @@ export interface PluginOptions {
    * 默认为 true
    */
   smartModelName?: boolean;
+
+  /**
+   * 是否在模型展示名称后追加 (providerName)，如 "DeepSeek V3 (SiliconFlow)"，模型 id 保持不变
+   * 默认为 false
+   */
+  showProviderName?: boolean;
+
+  /**
+   * showProviderName 的别名
+   */
+  appendProviderName?: boolean;
 
   /**
    * 网络请求超时时间（毫秒）

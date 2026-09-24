@@ -100,4 +100,85 @@ describe("OpenCode 2 Catalog 注入器测试", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("当开启 showProviderName 时，模型名称后应追加 (providerName) 且模型 id 不变", async () => {
+    const state: {
+      providers: Map<string, any>;
+      models: Map<string, Map<string, any>>;
+    } = {
+      providers: new Map(),
+      models: new Map(),
+    };
+
+    const mockEditor: OpenCodeV2CatalogEditor = {
+      provider: {
+        list: () => Array.from(state.providers.values()),
+        get: (id) => state.providers.get(id),
+        update: (id, fn) => {
+          let p = state.providers.get(id) || { id };
+          fn(p);
+          state.providers.set(id, p);
+        },
+        remove: (id) => state.providers.delete(id),
+      },
+      model: {
+        get: (pId, mId) => state.models.get(pId)?.get(mId),
+        update: (pId, mId, fn) => {
+          let pModels = state.models.get(pId);
+          if (!pModels) {
+            pModels = new Map();
+            state.models.set(pId, pModels);
+          }
+          let m = pModels.get(mId) || { id: mId, providerID: pId };
+          fn(m);
+          pModels.set(mId, m);
+        },
+        remove: (pId, mId) => state.models.get(pId)?.delete(mId),
+      },
+    };
+
+    const mockCtx: OpenCodeV2Context = {
+      catalog: {
+        transform: async (fn) => {
+          await fn(mockEditor);
+        },
+        reload: async () => {},
+      },
+    };
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      return {
+        ok: true,
+        json: async () => ({
+          object: "list",
+          data: [{ id: "deepseek-chat" }],
+        }),
+      } as any;
+    }) as any;
+
+    try {
+      const targets: ProviderTarget[] = [
+        {
+          id: "custom-relay",
+          name: "My Relay",
+          baseURL: "http://127.0.0.1:8000/v1",
+          showProviderName: true,
+        },
+      ];
+
+      await injectV2Catalog(mockCtx, targets, {});
+
+      const models = state.models.get("custom-relay");
+      expect(models).toBeDefined();
+      const deepseek = models?.get("deepseek-chat");
+      expect(deepseek).toBeDefined();
+      // 模型 id 必须完全保持不变
+      expect(deepseek.id).toBe("deepseek-chat");
+      // 模型 name 必须带有 (My Relay)
+      expect(deepseek.name).toBe("Deepseek Chat (My Relay)");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

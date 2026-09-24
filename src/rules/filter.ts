@@ -101,3 +101,19 @@ export function formatSmartModelName(modelId: string): string {
     })
     .join(" ");
 }
+
+/**
+ * 在模型名称末尾追加供应商名称，例如 "DeepSeek V3 (Custom Provider)"
+ * 如果已有对应后缀则不会重复追加
+ */
+export function appendProviderNameToModelName(name: string, providerName?: string): string {
+  if (!providerName || typeof providerName !== "string") return name;
+  const trimmed = providerName.trim();
+  if (!trimmed) return name;
+  const suffix = `(${trimmed})`;
+  if (name.endsWith(suffix) || name.endsWith(` ${suffix}`)) {
+    return name;
+  }
+  return `${name} ${suffix}`;
+}
+

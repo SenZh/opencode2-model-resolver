@@ -1,6 +1,6 @@
 import { fetchRemoteModels } from "./fetcher/models-fetcher.js";
 import { fetchModelsDevData, lookupModelsDev } from "./fetcher/models-dev.js";
-import { formatSmartModelName, shouldIncludeModel } from "./rules/filter.js";
+import { formatSmartModelName, appendProviderNameToModelName, shouldIncludeModel } from "./rules/filter.js";
 import { resolveModelLimit } from "./rules/limits-database.js";
 import { modelCacheStore } from "./store/cache-store.js";
 import type { PluginOptions, ProviderTarget, RawOpenAIModel } from "./types.js";
@@ -24,6 +24,15 @@ export async function injectV1Config(
 
   for (const target of targets) {
     const providerID = target.id;
+    const providerName = (typeof target.name === "string" && target.name.trim())
+      ? target.name.trim()
+      : providerID;
+    const shouldAppendProviderName = Boolean(
+      target.showProviderName ||
+      target.appendProviderName ||
+      options.showProviderName ||
+      options.appendProviderName
+    );
 
     if (!config.provider[providerID]) {
       config.provider[providerID] = {
@@ -113,10 +122,14 @@ export async function injectV1Config(
         const input = devInfo?.limit?.input || ruleLimit.input;
 
         const existing = memoryModels[modelId] || {};
-        const displayName =
+        let displayName =
           existing.name ||
           devInfo?.name ||
           (options.smartModelName !== false ? formatSmartModelName(modelId) : modelId);
+
+        if (shouldAppendProviderName) {
+          displayName = appendProviderNameToModelName(displayName, providerName);
+        }
 
         memoryModels[modelId] = {
           ...existing,

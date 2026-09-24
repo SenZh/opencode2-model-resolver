@@ -1,6 +1,6 @@
 import { fetchRemoteModels } from "./fetcher/models-fetcher.js";
 import { fetchModelsDevData, lookupModelsDev } from "./fetcher/models-dev.js";
-import { formatSmartModelName, shouldIncludeModel } from "./rules/filter.js";
+import { formatSmartModelName, appendProviderNameToModelName, shouldIncludeModel } from "./rules/filter.js";
 import { resolveModelLimit } from "./rules/limits-database.js";
 import { modelCacheStore } from "./store/cache-store.js";
 import fs from "fs";
@@ -52,6 +52,15 @@ export async function injectV2Catalog(
 
   for (const target of targets) {
     const providerID = target.id;
+    const providerName = (typeof target.name === "string" && target.name.trim())
+      ? target.name.trim()
+      : providerID;
+    const shouldAppendProviderName = Boolean(
+      target.showProviderName ||
+      target.appendProviderName ||
+      options.showProviderName ||
+      options.appendProviderName
+    );
     debugLog(`正在解析 Provider [${providerID}] (${target.baseURL})...`);
 
     const modelMap: Record<string, ResolvedModelMeta> = {};
@@ -105,10 +114,14 @@ export async function injectV2Catalog(
       const input = devInfo?.limit?.input || ruleLimit.input;
 
       const existing = modelMap[modelID];
-      const displayName =
+      let displayName =
         existing?.name ||
         devInfo?.name ||
         (options.smartModelName !== false ? formatSmartModelName(modelID) : modelID);
+
+      if (shouldAppendProviderName) {
+        displayName = appendProviderNameToModelName(displayName, providerName);
+      }
 
       const meta: ResolvedModelMeta = {
         id: modelID,

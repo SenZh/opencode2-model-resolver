@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { formatSmartModelName, shouldIncludeModel } from "../src/rules/filter.js";
+import { formatSmartModelName, appendProviderNameToModelName, shouldIncludeModel } from "../src/rules/filter.js";
 
 describe("模型过滤与命名格式化测试 (filter)", () => {
   it("应自动过滤非对话模型（embedding, rerank, tts, whisper）", () => {
@@ -28,5 +28,23 @@ describe("模型过滤与命名格式化测试 (filter)", () => {
     expect(formatSmartModelName("qwen-coder-32b")).toBe("Qwen Coder 32b");
     expect(formatSmartModelName("grok-4.7-build-fast")).toBe("Grok 4.7 Build Fast");
     expect(formatSmartModelName("gpt-image-2.5")).toBe("GPT Image 2.5");
+  });
+
+  it("支持在模型名称后追加 (providerName)，且模型 id 保持不变", () => {
+    const rawId = "deepseek-ai/deepseek-chat";
+    const smartName = formatSmartModelName(rawId);
+    const withProvider = appendProviderNameToModelName(smartName, "Custom Provider");
+    expect(withProvider).toBe("Deepseek Chat (Custom Provider)");
+    // 确保原始 id 未受影响
+    expect(rawId).toBe("deepseek-ai/deepseek-chat");
+
+    // 不重复追加
+    expect(appendProviderNameToModelName("Deepseek Chat (Custom Provider)", "Custom Provider"))
+      .toBe("Deepseek Chat (Custom Provider)");
+
+    // providerName 为空时的回退
+    expect(appendProviderNameToModelName("Deepseek Chat", "")).toBe("Deepseek Chat");
+    expect(appendProviderNameToModelName("Deepseek Chat", "   ")).toBe("Deepseek Chat");
+    expect(appendProviderNameToModelName("Deepseek Chat", undefined)).toBe("Deepseek Chat");
   });
 });
