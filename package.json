@@ -1,6 +1,6 @@
 {
   "name": "@zsen/opencode2-model-resolver",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Dynamic model discovery and limit resolver for OpenCode 2",
   "main": "index.js",
   "type": "module",
