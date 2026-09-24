@@ -1,0 +1,37 @@
+{
+  "name": "@zsen/opencode2-model-resolver",
+  "version": "1.0.2",
+  "description": "Dynamic model discovery and limit resolver for OpenCode 2",
+  "main": "index.js",
+  "type": "module",
+  "files": [
+    "index.js",
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SenZh/opencode2-model-resolver.git"
+  },
+  "keywords": [
+    "opencode",
+    "opencode2",
+    "plugin",
+    "model-resolver",
+    "models-discovery",
+    "ai"
+  ],
+  "author": "SenZh",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "bun run build",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
