@@ -317,6 +317,16 @@ export default {
                     reasoningField: "reasoning_content",
                     ...modelDef.compatibility,
                   };
+
+                  // 实验：注入标准推理档位 (variants)
+                  if (!modelDef.variants || modelDef.variants.length === 0) {
+                    modelDef.variants = [
+                      { id: "none", body: { thinking: { type: "disabled" } } },
+                      { id: "low", settings: { reasoningEffort: "low" }, body: { thinking: { type: "enabled" } } },
+                      { id: "high", settings: { reasoningEffort: "high" }, body: { thinking: { type: "enabled" } } },
+                      { id: "max", settings: { reasoningEffort: "max" }, body: { thinking: { type: "enabled" } } },
+                    ];
+                  }
                 }
                 // 能力：OpenCode V2 的 Model.Info 唯一有效位置
                 if (m.capabilities) {
