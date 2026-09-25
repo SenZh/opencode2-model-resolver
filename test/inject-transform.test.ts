@@ -120,10 +120,81 @@ describe("注入端 transform 写入 capabilities 与 cost (TC-INJECT)", () => {
     expect(injected.cost[0].cache.read).toBe(0.075);
     expect(injected.cost[0].cache.write).toBe(0);
 
+    // 重点验证 reasoning 推理兼容性映射 (TC-COMPAT-01)
+    expect(injected.compatibility).toBeDefined();
+    expect(injected.compatibility.reasoningField).toBe("reasoning_content");
+
     // 验证缺省 cost 模型：不强写 cost = []，避免抹除既有配置
     const noCostInjected = state.get("test-provider/no-cost-model");
     expect(noCostInjected).toBeDefined();
     expect(noCostInjected.cost).toBeUndefined();
+    // 非推理模型不注入 reasoningField (TC-COMPAT-02)
+    expect(noCostInjected.compatibility?.reasoningField).toBeUndefined();
+  });
+
+  it("TC-COMPAT-03 ~ 05: compatibility 既有配置保留与自定义 reasoningField 防冲刷", () => {
+    const cacheDir = path.join(tmpHome, ".cache", "opencode2-model-resolver");
+    fs.writeFileSync(
+      path.join(cacheDir, "compat-test-provider-models.json"),
+      JSON.stringify({
+        schemaVersion: 3,
+        updatedAt: Date.now(),
+        models: [
+          {
+            id: "custom-reasoning-model",
+            name: "Custom",
+            reasoning: true,
+          },
+          {
+            id: "non-reasoning-model",
+            name: "NonReasoning",
+            reasoning: false,
+          },
+        ],
+      }),
+      "utf8"
+    );
+
+    const { state, editor } = makeProviderEditor();
+    state.set("compat-test-provider/custom-reasoning-model", {
+      id: "custom-reasoning-model",
+      providerID: "compat-test-provider",
+      compatibility: {
+        reasoningField: "thought",
+        requireReasoning: true,
+      },
+    });
+    state.set("compat-test-provider/non-reasoning-model", {
+      id: "non-reasoning-model",
+      providerID: "compat-test-provider",
+      compatibility: {
+        maxTokensField: "max_output_tokens",
+      },
+    });
+
+    let transformFn: any = null;
+    const mockCtx: any = {
+      provider: {
+        transform: (fn: any) => {
+          transformFn = fn;
+          return Promise.resolve({ dispose: async () => {} });
+        },
+        reload: async () => {},
+      },
+    };
+    plugin.setup(mockCtx);
+    transformFn(editor);
+
+    // TC-COMPAT-04: 用户自定义的 reasoningField 绝不被覆盖
+    const custom = state.get("compat-test-provider/custom-reasoning-model");
+    expect(custom.compatibility.reasoningField).toBe("thought");
+    // TC-COMPAT-03: 其他既有属性完整保留
+    expect(custom.compatibility.requireReasoning).toBe(true);
+
+    // TC-COMPAT-05: 非推理模型原有配置原样保留且不包含 reasoningField
+    const nonReasoning = state.get("compat-test-provider/non-reasoning-model");
+    expect(nonReasoning.compatibility.maxTokensField).toBe("max_output_tokens");
+    expect(nonReasoning.compatibility.reasoningField).toBeUndefined();
   });
 
   it("旧 schemaVersion=2 的缓存被跳过，触发重扫", () => {

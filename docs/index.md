@@ -80,3 +80,4 @@ setup()
 - `docs/changes/2026-09-24_limit-resolver-fix/` — models.dev limit 接入修复的完整产物（需求/分析/设计/契约/三轮审查/测试/总结）
 - `docs/changes/2026-09-25_modalities-and-filter/` — 生图模型过滤与多模态保留、capabilities 能力补齐
 - `docs/changes/2026-09-25_cost-injection/` — 官方基准成本注入、预索引字典、缓存升级 v3 与双源独立字段级防护
+- `docs/changes/2026-09-25_reasoning-compatibility-fix/` — 修复模型推理能力显示缺失，注入 compatibility.reasoningField 兼容思维链判定

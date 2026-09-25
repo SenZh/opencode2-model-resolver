@@ -310,6 +310,14 @@ export default {
                 if (m.reasoning !== undefined) {
                   modelDef.reasoning = m.reasoning;
                 }
+                // 推理能力兼容性映射：当模型具备 reasoning 时注入标准思维链字段
+                // 既有配置在后展开，确保上游或用户显式配置的 reasoningField 绝不被覆盖
+                if (m.reasoning === true) {
+                  modelDef.compatibility = {
+                    reasoningField: "reasoning_content",
+                    ...modelDef.compatibility,
+                  };
+                }
                 // 能力：OpenCode V2 的 Model.Info 唯一有效位置
                 if (m.capabilities) {
                   modelDef.capabilities = m.capabilities;

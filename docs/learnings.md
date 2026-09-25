@@ -1,5 +1,22 @@
 # 踩坑记录
 
+## 2026-09-25 — 模型推理能力判定依赖 compatibility.reasoningField 而非顶层布尔
+
+### 现象
+模型缓存中存有 `reasoning: true`，但在 OpenChamber / OpenCode V2 界面中，所有中转 Provider（如 CPA、FN）的模型均显示为"无推理能力"，选择器列表中的「R」图标也全为灰色。
+
+### 根因
+OpenChamber 前端对推理能力的判定公式为：
+`n = e.variants.length > 0 || e.compatibility?.reasoningField !== undefined || e.compatibility?.requireReasoning === true`
+此前插件一直在顶层注入 `modelDef.reasoning = m.reasoning`。然而 OpenCode V2 的核心 Schema（Effect Schema）顶层根本没有 `reasoning` 布尔字段，导致被内核静默忽略，`/api/model` 返回的 `compatibility` 为 `undefined`。
+因此，虽然缓存中有 `reasoning: true`，但前端完全感知不到。
+
+### 修复与教训
+1. **只有通过 `compatibility.reasoningField`（如设置为 `"reasoning_content"`）才能激活 OpenCode 核心与 OpenChamber 前端的推理能力识别**。
+2. 合并时必须遵循既有配置优先：`modelDef.compatibility = { reasoningField: "reasoning_content", ...modelDef.compatibility }`，以防强行覆写用户已有的自定义字段（如 `"thought"`）。
+
+---
+
 ## 2026-09-25 — 官方参考成本注入与 Effect Schema 必填契约
 
 ### 现象
