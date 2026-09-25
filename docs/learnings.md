@@ -1,5 +1,22 @@
 # 踩坑记录
 
+## 2026-09-25 — 官方参考成本注入与 Effect Schema 必填契约
+
+### 现象
+注入端 transform 如果只设置了 `cache: { read: m.cost.cache_read }`（缺少 `write` 属性），调用 OpenCode 运行时 `/api/model` 接口时会直接抛出 400 Bad Request 错误：
+`{"_tag":"InvalidRequestError","message":"Missing key\n at [\"data\"][9][\"cost\"][0][\"cache\"][\"write\"]","kind":"Body"}`
+
+### 根因
+OpenCode V2 核心采用 Effect Schema 进行运行时契约校验。其 `Config.Model.Cost.Cache` Schema 明确将 `read` 和 `write` 均定义为必填数字字段（`read: number, write: number`）。
+如果给 `cost[0]` 挂载了 `cache` 属性，则 `read` 和 `write` **都必须有确定的数字类型值**。缺少 `write`（即为 `undefined`）会被内核拦截，直接导致整个模型列表 API 拒绝响应。
+
+### 关键教训
+1. **API 联调不能停留在单测 Mock，必须直接向运行时的 `/api/model` 发起真实校验**。单元测试中自己 mock 的 `editor.update` 只会接受 JS 对象，根本不会执行内核底层的 Effect Schema 运行时校验。
+2. 即使模型不支持 Prompt Caching 写入计费（如绝大多数模型 `cache_write` 价格为 0 或未单独标价），在给 OpenCode 提供 `cache` 结构时，也必须保证 `write: m.cost.cache_write ?? 0`，以满足 Schema 的强类型约束。
+3. **前缀候选池必须限定官方白名单**：在处理像 `models.dev/api.json` 这样包含 200+ Provider 的海量数据时，如果无差别收集第三方前缀，不仅会导致遍历性能剧烈退化，还会被排序在前的第三方加价代理抢占前缀，污染最终的基准定价。
+
+---
+
 ## 2026-09-25 — 生图模型过滤 + 能力字段补全
 
 ### 现象

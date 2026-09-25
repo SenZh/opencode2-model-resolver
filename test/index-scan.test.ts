@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { resolveProviderModels } from "../src/index.js";
 import { lookupModelsDev } from "../src/fetcher/models-dev.js";
 import type { ModelsDevModel } from "../src/fetcher/models-dev.js";
+import { buildCostIndex } from "../src/fetcher/models-dev-api.js";
 
 function makeCache(entries: Record<string, ModelsDevModel>): Map<string, ModelsDevModel> {
   return new Map(Object.entries(entries).map(([k, v]) => [k.toLowerCase(), v]));
@@ -204,5 +205,34 @@ describe("扫描路径端到端 — 过滤与能力", () => {
       input: ["text"],
       output: ["text"],
     });
+  });
+
+  it("TC-SCAN-COST-01: 扫描端到端产出附带官方参考 cost", () => {
+    const mockApiData = {
+      openai: {
+        models: {
+          "gpt-5.6-luna": { cost: { input: 0.2, output: 1.2, cache_read: 0.02 } },
+        },
+      },
+      xai: {
+        models: {
+          "grok-4.7": { cost: { input: 2.0, output: 6.0 } },
+        },
+      },
+    };
+    const costTables = buildCostIndex(mockApiData);
+
+    const raw = [{ id: "gpt-5.6-luna" }, { id: "grok-4.7" }];
+    const models = resolveProviderModels(raw, REAL_CACHE, {}, undefined, costTables);
+    const byId = Object.fromEntries(models.map((m) => [m.id, m]));
+
+    expect(byId["gpt-5.6-luna"].cost).toBeDefined();
+    expect(byId["gpt-5.6-luna"].cost?.input).toBe(0.2);
+    expect(byId["gpt-5.6-luna"].cost?.output).toBe(1.2);
+    expect(byId["gpt-5.6-luna"].cost?.cache_read).toBe(0.02);
+
+    expect(byId["grok-4.7"].cost).toBeDefined();
+    expect(byId["grok-4.7"].cost?.input).toBe(2.0);
+    expect(byId["grok-4.7"].cost?.output).toBe(6.0);
   });
 });

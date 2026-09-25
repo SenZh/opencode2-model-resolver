@@ -44,13 +44,13 @@ function makeProviderEditor() {
   };
 }
 
-describe("注入端 transform 写入 capabilities (集成-1)", () => {
-  it("从缓存 payload 注入时应写入 capabilities 与 reasoning，不注入 attachment", async () => {
-    // 预置缓存：新 schemaVersion=2，含 capabilities
+describe("注入端 transform 写入 capabilities 与 cost (TC-INJECT)", () => {
+  it("TC-INJECT-COST-01: 从缓存 payload 注入时应正确写入 capabilities 与符合 Effect Schema 的 cost 数组", async () => {
+    // 预置缓存：schemaVersion=3，含 capabilities 与 cost
     const cacheDir = path.join(tmpHome, ".cache", "opencode2-model-resolver");
     fs.mkdirSync(cacheDir, { recursive: true });
     const payload = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       updatedAt: Date.now(),
       models: [
         {
@@ -63,6 +63,19 @@ describe("注入端 transform 写入 capabilities (集成-1)", () => {
             input: ["text", "image", "video", "audio", "pdf"],
             output: ["text"],
           },
+          cost: {
+            input: 0.75,
+            output: 3.75,
+            cache_read: 0.075,
+            // 注意：没有 cache_write
+          },
+        },
+        {
+          id: "no-cost-model",
+          name: "No Cost Model",
+          limit: { context: 128000, output: 8192 },
+          reasoning: false,
+          capabilities: { tools: true, input: ["text"], output: ["text"] },
         },
       ],
     };
@@ -94,19 +107,31 @@ describe("注入端 transform 写入 capabilities (集成-1)", () => {
     expect(injected.capabilities).toBeDefined();
     expect(injected.capabilities.tools).toBe(true);
     expect(injected.capabilities.input).toEqual(["text", "image", "video", "audio", "pdf"]);
-    expect(injected.capabilities.output).toEqual(["text"]);
-    // limit 仍正确写入
     expect(injected.limit.context).toBe(1048576);
-    // reasoning 写入（缓存字段，V1/旧路径兼容用）
-    expect(injected.reasoning).toBe(true);
+
+    // 重点验证 cost 结构：
+    expect(injected.cost).toBeDefined();
+    expect(Array.isArray(injected.cost)).toBe(true);
+    expect(injected.cost.length).toBe(1);
+    expect(injected.cost[0].input).toBe(0.75);
+    expect(injected.cost[0].output).toBe(3.75);
+    expect(injected.cost[0].cache.read).toBe(0.075);
+    // 遵循 OpenCode 运行时核心 Schema：cache.read 与 cache.write 均为 required number
+    expect(injected.cost[0].cache.read).toBe(0.075);
+    expect(injected.cost[0].cache.write).toBe(0);
+
+    // 验证缺省 cost 模型：不强写 cost = []，避免抹除既有配置
+    const noCostInjected = state.get("test-provider/no-cost-model");
+    expect(noCostInjected).toBeDefined();
+    expect(noCostInjected.cost).toBeUndefined();
   });
 
-  it("旧 schemaVersion=1 的缓存被跳过，不注入", () => {
+  it("旧 schemaVersion=2 的缓存被跳过，触发重扫", () => {
     const cacheDir = path.join(tmpHome, ".cache", "opencode2-model-resolver");
     fs.writeFileSync(
       path.join(cacheDir, "legacy-provider-models.json"),
       JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 2,
         updatedAt: Date.now(),
         models: [{ id: "old-model", name: "Old", limit: { context: 1, output: 1 } }],
       }),

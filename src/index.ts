@@ -4,6 +4,9 @@ import os from "os";
 import { resolveAuthoritativeLimit } from "./rules/limits-database.js";
 import { fetchModelsDevData, lookupModelsDev } from "./fetcher/models-dev.js";
 import type { ModelsDevModel } from "./fetcher/models-dev.js";
+import { fetchModelsDevApiData } from "./fetcher/models-dev-api.js";
+import type { ModelCost, PreIndexedCostTables } from "./fetcher/models-dev-api.js";
+import { resolveModelCost } from "./rules/cost.js";
 import {
   formatSmartModelName,
   appendProviderNameToModelName,
@@ -14,38 +17,38 @@ import type { ModelCapabilities } from "./rules/filter.js";
 import type { ModelLimit, ModelRule, RawOpenAIModel } from "./types.js";
 
 /** 缓存文件 schema 版本号，格式变更时递增即可让旧缓存自动失效 */
-const CACHE_SCHEMA_VERSION = 2;
+export const CACHE_SCHEMA_VERSION = 3;
 
-interface CachedModelEntry {
+export interface CachedModelEntry {
   id: string;
   name: string;
   limit: { context: number; output: number; input?: number };
   reasoning: boolean;
   capabilities: ModelCapabilities;
+  cost?: ModelCost;
 }
 
-interface CachedModelsPayload {
+export interface CachedModelsPayload {
   schemaVersion: number;
   updatedAt: number;
   models: CachedModelEntry[];
 }
 
 /**
- * 构建单条缓存条目：应用字段级失败防护。
+ * 构建单条缓存条目：应用严格的独立字段级失败防护。
  *
- * 防护仅在「models.dev 整体不可用」时生效——此时本次算出的可能全是规则值，
- * 若旧缓存已有可用值则保留，避免把已固化的正确值覆写成规则值。
- *
- * 注意必须传入 `modelsDevAvailable`（models.dev 缓存非空）来区分两种
- * `matchedModelsDev=false` 的情形：
- *   - models.dev 不可用（available=false）→ 保护旧值
- *   - models.dev 可用但该模型本就没有条目（available=true）→ 正常写入，不冻结
+ * 针对双数据源独立可用性：
+ * - limit / capabilities: 在 models.dev 整体不可用且未命中权威值时，保护旧缓存可用值
+ * - cost: 在 api.json 价格源整体不可用且未命中新价格时，保护旧缓存可用值
+ * 避免两源一成一败时发生互相覆盖（P1-防护）。
  */
 export function buildCachedEntry(
   entry: CachedModelEntry,
   matchedModelsDev: boolean,
+  matchedCost: boolean,
   prev: CachedModelEntry | undefined,
-  modelsDevAvailable: boolean
+  modelsDevAvailable: boolean,
+  apiAvailable: boolean
 ): CachedModelEntry {
   const prevHasUsableLimit =
     prev &&
@@ -53,10 +56,28 @@ export function buildCachedEntry(
     prev.limit.context > 0 &&
     typeof prev.limit?.output === "number" &&
     prev.limit.output > 0;
-  if (!modelsDevAvailable && !matchedModelsDev && prevHasUsableLimit) {
-    return prev;
-  }
-  return entry;
+
+  const prevHasUsableCost =
+    prev &&
+    prev.cost &&
+    typeof prev.cost.input === "number" &&
+    typeof prev.cost.output === "number";
+
+  return {
+    ...entry,
+    limit:
+      !modelsDevAvailable && !matchedModelsDev && prevHasUsableLimit
+        ? prev!.limit
+        : entry.limit,
+    capabilities:
+      !modelsDevAvailable && !matchedModelsDev && prev?.capabilities
+        ? prev!.capabilities
+        : entry.capabilities,
+    cost:
+      !apiAvailable && !matchedCost && prevHasUsableCost
+        ? prev!.cost
+        : entry.cost,
+  };
 }
 
 /**
@@ -81,16 +102,41 @@ export function parseCachedModels(raw: string): CachedModelEntry[] | null {
 }
 
 /**
+ * 扫描失败防护专用：兼容读取 schemaVersion >= 2 的历史有效缓存
+ * 确保版本升级后首次扫描遇断网时，原有正确的上下文与能力不会被抹除
+ */
+export function parseOldCachedModelsForFallback(raw: string): CachedModelEntry[] | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof parsed.schemaVersion === "number" &&
+      parsed.schemaVersion >= 2 &&
+      Array.isArray(parsed.models)
+    ) {
+      return parsed.models as CachedModelEntry[];
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 解析单个 provider 的模型列表为可缓存的条目数组。
  *
  * 这是 `setup()` 扫描路径的核心逻辑，抽为纯函数以便测试：
  *   - 权威 limit 解析（models.dev 优先）
- *   - 字段级失败防护（models.dev 整体不可用时保留旧值）
+ *   - 模态与能力解析（capabilities）
+ *   - 官方参考成本解析（cost）
+ *   - 字段级双源独立失败防护
  *
  * @param rawModels       远程探测到的原始模型列表
- * @param modelsDevCache  models.dev 权威数据库
+ * @param modelsDevCache  models.dev 权威限额数据库
  * @param options         过滤/命名/规则等配置
  * @param prevEntries     上次缓存的条目（用于失败防护）
+ * @param costTables      models.dev/api.json 预索引价格表
  */
 export function resolveProviderModels(
   rawModels: RawOpenAIModel[],
@@ -104,9 +150,11 @@ export function resolveProviderModels(
     shouldAppendProviderName?: boolean;
     providerName?: string;
   },
-  prevEntries?: CachedModelEntry[]
+  prevEntries?: CachedModelEntry[],
+  costTables?: PreIndexedCostTables | null
 ): CachedModelEntry[] {
   const modelsDevAvailable = Boolean(modelsDevCache && modelsDevCache.size > 0);
+  const apiAvailable = Boolean(costTables !== null && costTables !== undefined);
 
   const prevById: Record<string, CachedModelEntry> = {};
   for (const m of prevEntries || []) {
@@ -139,6 +187,9 @@ export function resolveProviderModels(
       defaultLimit: options.defaultLimit,
     });
 
+    const cost = resolveModelCost(modelId, costTables);
+    const matchedCost = Boolean(cost !== undefined);
+
     result.push(
       buildCachedEntry(
         {
@@ -147,10 +198,13 @@ export function resolveProviderModels(
           limit: authoritative.limit,
           reasoning: authoritative.reasoning === true,
           capabilities: resolveCapabilities(devInfo),
+          cost,
         },
         authoritative.matchedModelsDev,
+        matchedCost,
         prevById[modelId],
-        modelsDevAvailable
+        modelsDevAvailable,
+        apiAvailable
       )
     );
   }
@@ -194,8 +248,9 @@ function resolveSystemApiKey(providerId: string): string {
   }
 
   // 尝试环境变量
-  const envKey = process.env[`${providerId.toUpperCase()}_API_KEY`] ||
-                 process.env[`${providerId.toUpperCase()}_KEY`];
+  const envKey =
+    process.env[`${providerId.toUpperCase()}_API_KEY`] ||
+    process.env[`${providerId.toUpperCase()}_KEY`];
   if (envKey) return envKey;
 
   return "";
@@ -237,9 +292,10 @@ export default {
             const providerObj = config?.provider?.[providerId];
             const discovery = providerObj?.options?.modelsDiscovery;
             const shouldAppend = Boolean(discovery?.showProviderName || discovery?.appendProviderName);
-            const providerName = (typeof providerObj?.name === "string" && providerObj.name.trim())
-              ? providerObj.name.trim()
-              : providerId;
+            const providerName =
+              typeof providerObj?.name === "string" && providerObj.name.trim()
+                ? providerObj.name.trim()
+                : providerId;
 
             for (const m of cachedModels) {
               providers.models.update(providerId, m.id, (modelDef: any) => {
@@ -257,6 +313,23 @@ export default {
                 // 能力：OpenCode V2 的 Model.Info 唯一有效位置
                 if (m.capabilities) {
                   modelDef.capabilities = m.capabilities;
+                }
+                // 成本：遵循 OpenCode 运行时核心 Schema 契约（cache.read 与 cache.write 均为必填属性）
+                if (
+                  m.cost &&
+                  typeof m.cost.input === "number" &&
+                  typeof m.cost.output === "number"
+                ) {
+                  modelDef.cost = [
+                    {
+                      input: m.cost.input,
+                      output: m.cost.output,
+                      cache: {
+                        read: m.cost.cache_read ?? 0,
+                        write: m.cost.cache_write ?? 0,
+                      },
+                    },
+                  ];
                 }
               });
             }
@@ -276,9 +349,16 @@ export default {
 
         let needsReload = false;
 
-        // 预热 models.dev 权威数据库（仅一次，失败返回空 Map 不阻塞）
-        const modelsDevCache = await fetchModelsDevData();
-        log(`models.dev cache loaded: ${modelsDevCache ? modelsDevCache.size : 0} keys`);
+        // 并行预热 models.dev 限额库和 api.json 价格表（失败安全降级，不阻塞核心主线）
+        const [modelsDevCache, costTables] = await Promise.all([
+          fetchModelsDevData(),
+          fetchModelsDevApiData(),
+        ]);
+        log(
+          `models.dev cache loaded: ${modelsDevCache ? modelsDevCache.size : 0} keys, costTables loaded: ${
+            costTables ? "yes" : "no"
+          }`
+        );
 
         for (const [providerId, providerObj] of Object.entries(config.provider || {})) {
           const provider = providerObj as any;
@@ -314,7 +394,7 @@ export default {
 
             const res = await fetch(url, {
               headers,
-              signal: controller.signal
+              signal: controller.signal,
             });
             clearTimeout(timer);
 
@@ -331,16 +411,19 @@ export default {
             const shouldAppendProviderName = Boolean(
               discovery.showProviderName || discovery.appendProviderName
             );
-            const providerName = (typeof provider.name === "string" && provider.name.trim())
-              ? provider.name.trim()
-              : providerId;
+            const providerName =
+              typeof provider.name === "string" && provider.name.trim()
+                ? provider.name.trim()
+                : providerId;
 
-            // 读取旧缓存用于字段级失败防护（格式不符则为空）
+            // 读取旧缓存用于字段级失败防护（兼容 schemaVersion >= 2 确保跨版本迁移断网防护）
             const cacheFilePath = path.join(getCacheDir(), `${providerId}-models.json`);
             let prevEntries: CachedModelEntry[] | undefined;
             try {
               if (fs.existsSync(cacheFilePath)) {
-                prevEntries = parseCachedModels(fs.readFileSync(cacheFilePath, "utf8")) || undefined;
+                prevEntries =
+                  parseOldCachedModelsForFallback(fs.readFileSync(cacheFilePath, "utf8")) ||
+                  undefined;
               }
             } catch {}
 
@@ -356,10 +439,11 @@ export default {
                 shouldAppendProviderName,
                 providerName,
               },
-              prevEntries
+              prevEntries,
+              costTables
             );
 
-            // 保存到独立缓存（带 schema 版本号，便于格式演进时自动失效）
+            // 保存到独立缓存（带 schemaVersion: 3）
             const cacheDir = getCacheDir();
             if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
             const payload: CachedModelsPayload = {
@@ -390,5 +474,5 @@ export default {
         log(`Background discovery cycle error: ${err.message}`);
       }
     })();
-  }
+  },
 };
