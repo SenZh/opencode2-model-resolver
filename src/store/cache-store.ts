@@ -18,15 +18,20 @@ export interface CachedProviderData {
  * 确保永远不回写污染用户的 opencode.json
  */
 export class ModelCacheStore {
-  private cacheDir: string;
+  private cacheDirOverride?: string;
 
-  constructor() {
-    this.cacheDir = getCacheDir();
+  constructor(cacheDir?: string) {
+    this.cacheDirOverride = cacheDir;
+  }
+
+  /** 惰性解析缓存目录：允许测试在运行时通过环境变量覆盖 HOME/USERPROFILE */
+  private resolveCacheDir(): string {
+    return this.cacheDirOverride || getCacheDir();
   }
 
   private getFilePath(providerId: string): string {
     const safeName = providerId.replace(/[^a-zA-Z0-9_-]/g, "_");
-    return path.join(this.cacheDir, `${safeName}.json`);
+    return path.join(this.resolveCacheDir(), `${safeName}.json`);
   }
 
   async read(providerId: string): Promise<Record<string, any> | undefined> {
@@ -43,7 +48,7 @@ export class ModelCacheStore {
   async save(providerId: string, models: Record<string, any>): Promise<void> {
     const file = this.getFilePath(providerId);
     try {
-      await fs.mkdir(this.cacheDir, { recursive: true });
+      await fs.mkdir(this.resolveCacheDir(), { recursive: true });
       const payload: CachedProviderData = {
         updatedAt: Date.now(),
         models,

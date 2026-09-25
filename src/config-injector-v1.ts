@@ -1,7 +1,7 @@
 import { fetchRemoteModels } from "./fetcher/models-fetcher.js";
 import { fetchModelsDevData, lookupModelsDev } from "./fetcher/models-dev.js";
 import { formatSmartModelName, appendProviderNameToModelName, shouldIncludeModel } from "./rules/filter.js";
-import { resolveModelLimit } from "./rules/limits-database.js";
+import { resolveAuthoritativeLimit } from "./rules/limits-database.js";
 import { modelCacheStore } from "./store/cache-store.js";
 import type { PluginOptions, ProviderTarget, RawOpenAIModel } from "./types.js";
 
@@ -59,15 +59,18 @@ export async function injectV1Config(
     for (const [mId, mConf] of Object.entries(explicitModels)) {
       const existing: any = (mConf && typeof mConf === "object") ? { ...mConf } : {};
       const devInfo = lookupModelsDev(mId, modelsDevCache);
-      const { limit: ruleLimit, reasoning: ruleReasoning } = resolveModelLimit(
+      const authoritative = resolveAuthoritativeLimit(
         { id: mId },
-        options.rules,
-        target.defaultLimit || options.defaultLimit
+        {
+          modelsDevCache,
+          rules: options.rules,
+          defaultLimit: target.defaultLimit || options.defaultLimit,
+        }
       );
 
-      const context = devInfo?.limit?.context || ruleLimit.context;
-      const output = devInfo?.limit?.output || ruleLimit.output;
-      const input = devInfo?.limit?.input || ruleLimit.input;
+      const context = authoritative.limit.context;
+      const output = authoritative.limit.output;
+      const input = authoritative.limit.input;
 
       existing.name = existing.name || devInfo?.name || formatSmartModelName(mId);
       existing.limit = {
@@ -77,7 +80,7 @@ export async function injectV1Config(
         ...(existing.limit || {}),
       };
 
-      if (devInfo?.reasoning || (ruleReasoning && existing.reasoning === undefined)) {
+      if (devInfo?.reasoning || (authoritative.reasoning && existing.reasoning === undefined)) {
         existing.reasoning = true;
       }
       if (devInfo?.attachment !== undefined && existing.attachment === undefined) {
@@ -111,15 +114,15 @@ export async function injectV1Config(
       for (const raw of filteredModels) {
         const modelId = raw.id;
         const devInfo = lookupModelsDev(modelId, modelsDevCache);
-        const { limit: ruleLimit, reasoning: ruleReasoning } = resolveModelLimit(
-          raw,
-          options.rules,
-          target.defaultLimit || options.defaultLimit
-        );
+        const authoritative = resolveAuthoritativeLimit(raw, {
+          modelsDevCache,
+          rules: options.rules,
+          defaultLimit: target.defaultLimit || options.defaultLimit,
+        });
 
-        const context = devInfo?.limit?.context || ruleLimit.context;
-        const output = devInfo?.limit?.output || ruleLimit.output;
-        const input = devInfo?.limit?.input || ruleLimit.input;
+        const context = authoritative.limit.context;
+        const output = authoritative.limit.output;
+        const input = authoritative.limit.input;
 
         const existing = memoryModels[modelId] || {};
         let displayName =
@@ -142,7 +145,7 @@ export async function injectV1Config(
           },
         };
 
-        if (devInfo?.reasoning || (ruleReasoning && memoryModels[modelId].reasoning === undefined)) {
+        if (devInfo?.reasoning || (authoritative.reasoning && memoryModels[modelId].reasoning === undefined)) {
           memoryModels[modelId].reasoning = true;
         }
         if (devInfo?.attachment !== undefined && memoryModels[modelId].attachment === undefined) {

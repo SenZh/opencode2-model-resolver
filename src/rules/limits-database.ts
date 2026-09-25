@@ -1,4 +1,6 @@
 import type { ModelLimit, ModelRule, RawOpenAIModel } from "../types.js";
+import type { ModelsDevModel } from "../fetcher/models-dev.js";
+import { lookupModelsDev } from "../fetcher/models-dev.js";
 
 /**
  * 默认兜底限制（128K context, 8K output）
@@ -308,5 +310,76 @@ export function resolveModelLimit(
   return {
     limit: defaultLimit,
     reasoning: /-reasoner|-thinking|reasoning/i.test(modelId),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 权威 limit 解析（models.dev 优先，规则库兜底）
+// ---------------------------------------------------------------------------
+
+export interface AuthoritativeLimitOptions {
+  /** models.dev 权威数据库；未提供或为空时仅使用本地规则库 */
+  modelsDevCache?: Map<string, ModelsDevModel>;
+  /** 用户自定义规则（最高优先级，透传给 resolveModelLimit） */
+  rules?: ModelRule[];
+  /** 未匹配到已知模型时的兜底限制 */
+  defaultLimit?: Partial<ModelLimit>;
+}
+
+export interface AuthoritativeLimitResult {
+  limit: ModelLimit;
+  reasoning?: boolean;
+  /** 是否从 models.dev 命中了「有效」limit（context/output/input 任一为正） */
+  matchedModelsDev: boolean;
+}
+
+/**
+ * 解析模型的权威 limit：models.dev 优先，本地规则库兜底。
+ *
+ * 合并语义（关键）：
+ *   - 所有数值字段使用 `value > 0` 判定，0 视为「无效/未提供」→ 回落规则值。
+ *     禁止使用 `||`，避免 models.dev 的 0（如生图模型）被误吞或误保留。
+ *   - reasoning 使用布尔 OR，无 falsy 陷阱。
+ *
+ * 本函数不修改 resolveModelLimit 的既有行为，仅在其结果之上叠加 models.dev 权威层。
+ */
+export function resolveAuthoritativeLimit(
+  rawModel: RawOpenAIModel,
+  options?: AuthoritativeLimitOptions
+): AuthoritativeLimitResult {
+  const ruleResult = resolveModelLimit(
+    rawModel,
+    options?.rules,
+    options?.defaultLimit
+  );
+  const ruleLimit = ruleResult.limit;
+
+  const devInfo =
+    options?.modelsDevCache && options.modelsDevCache.size > 0
+      ? lookupModelsDev(rawModel.id, options.modelsDevCache)
+      : undefined;
+
+  const devContext = devInfo?.limit?.context;
+  const devOutput = devInfo?.limit?.output;
+  const devInput = devInfo?.limit?.input;
+
+  const hasDevContext = typeof devContext === "number" && devContext > 0;
+  const hasDevOutput = typeof devOutput === "number" && devOutput > 0;
+  const hasDevInput = typeof devInput === "number" && devInput > 0;
+
+  const limit: ModelLimit = {
+    context: hasDevContext ? devContext : ruleLimit.context,
+    output: hasDevOutput ? devOutput : ruleLimit.output,
+  };
+
+  if (hasDevInput || (typeof ruleLimit.input === "number" && ruleLimit.input > 0)) {
+    limit.input = hasDevInput ? devInput : ruleLimit.input;
+  }
+
+  return {
+    limit,
+    reasoning: devInfo?.reasoning || ruleResult.reasoning,
+    // 任一字段命中 models.dev 即视为「拿到了权威值」，避免 context=0/output>0 被误判为未命中
+    matchedModelsDev: hasDevContext || hasDevOutput || hasDevInput,
   };
 }

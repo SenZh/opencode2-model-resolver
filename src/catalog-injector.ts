@@ -1,7 +1,7 @@
 import { fetchRemoteModels } from "./fetcher/models-fetcher.js";
 import { fetchModelsDevData, lookupModelsDev } from "./fetcher/models-dev.js";
 import { formatSmartModelName, appendProviderNameToModelName, shouldIncludeModel } from "./rules/filter.js";
-import { resolveModelLimit } from "./rules/limits-database.js";
+import { resolveAuthoritativeLimit } from "./rules/limits-database.js";
 import { modelCacheStore } from "./store/cache-store.js";
 import fs from "fs";
 import path from "path";
@@ -48,7 +48,7 @@ export async function injectV2Catalog(
   options: PluginOptions
 ): Promise<void> {
   const modelsDevCache = await fetchModelsDevData();
-  debugLog("Fetched modelsDevCache keys:", Object.keys(modelsDevCache || {}).length);
+  debugLog("Fetched modelsDevCache keys:", modelsDevCache ? modelsDevCache.size : 0);
 
   for (const target of targets) {
     const providerID = target.id;
@@ -103,15 +103,16 @@ export async function injectV2Catalog(
     for (const raw of filteredModels) {
       const modelID = raw.id;
       const devInfo = lookupModelsDev(modelID, modelsDevCache);
-      const { limit: ruleLimit, reasoning: ruleReasoning } = resolveModelLimit(
-        raw,
-        options.rules,
-        target.defaultLimit || options.defaultLimit
-      );
 
-      const context = devInfo?.limit?.context || ruleLimit.context;
-      const output = devInfo?.limit?.output || ruleLimit.output;
-      const input = devInfo?.limit?.input || ruleLimit.input;
+      // 权威 limit：models.dev 优先（0 视为无效），规则库兜底
+      const authoritative = resolveAuthoritativeLimit(raw, {
+        modelsDevCache,
+        rules: options.rules,
+        defaultLimit: target.defaultLimit || options.defaultLimit,
+      });
+      const context = authoritative.limit.context;
+      const output = authoritative.limit.output;
+      const input = authoritative.limit.input;
 
       const existing = modelMap[modelID];
       let displayName =
@@ -134,7 +135,7 @@ export async function injectV2Catalog(
         },
       };
 
-      if (devInfo?.reasoning || (ruleReasoning && existing?.reasoning === undefined)) {
+      if (devInfo?.reasoning || (authoritative.reasoning && existing?.reasoning === undefined)) {
         meta.reasoning = true;
       }
       if (devInfo?.attachment !== undefined && existing?.attachment === undefined) {

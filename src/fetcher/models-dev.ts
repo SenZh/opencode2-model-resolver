@@ -21,6 +21,11 @@ export const DEFAULT_MODELS_DEV_URL = "https://models.dev/models.json";
 
 let memoryCache: Map<string, ModelsDevModel> | null = null;
 
+/** 仅供测试使用：清空模块级内存缓存，避免跨用例串扰 */
+export function __resetModelsDevCacheForTest(): void {
+  memoryCache = null;
+}
+
 function isObject(val: unknown): val is Record<string, any> {
   return typeof val === "object" && val !== null && !Array.isArray(val);
 }

@@ -1,8 +1,162 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { resolveModelLimit } from "./rules/limits-database.js";
-import { formatSmartModelName, appendProviderNameToModelName, shouldIncludeModel } from "./rules/filter.js";
+import { resolveAuthoritativeLimit } from "./rules/limits-database.js";
+import { fetchModelsDevData, lookupModelsDev } from "./fetcher/models-dev.js";
+import type { ModelsDevModel } from "./fetcher/models-dev.js";
+import {
+  formatSmartModelName,
+  appendProviderNameToModelName,
+  shouldIncludeModel,
+  resolveCapabilities,
+} from "./rules/filter.js";
+import type { ModelCapabilities } from "./rules/filter.js";
+import type { ModelLimit, ModelRule, RawOpenAIModel } from "./types.js";
+
+/** 缓存文件 schema 版本号，格式变更时递增即可让旧缓存自动失效 */
+const CACHE_SCHEMA_VERSION = 2;
+
+interface CachedModelEntry {
+  id: string;
+  name: string;
+  limit: { context: number; output: number; input?: number };
+  reasoning: boolean;
+  capabilities: ModelCapabilities;
+}
+
+interface CachedModelsPayload {
+  schemaVersion: number;
+  updatedAt: number;
+  models: CachedModelEntry[];
+}
+
+/**
+ * 构建单条缓存条目：应用字段级失败防护。
+ *
+ * 防护仅在「models.dev 整体不可用」时生效——此时本次算出的可能全是规则值，
+ * 若旧缓存已有可用值则保留，避免把已固化的正确值覆写成规则值。
+ *
+ * 注意必须传入 `modelsDevAvailable`（models.dev 缓存非空）来区分两种
+ * `matchedModelsDev=false` 的情形：
+ *   - models.dev 不可用（available=false）→ 保护旧值
+ *   - models.dev 可用但该模型本就没有条目（available=true）→ 正常写入，不冻结
+ */
+export function buildCachedEntry(
+  entry: CachedModelEntry,
+  matchedModelsDev: boolean,
+  prev: CachedModelEntry | undefined,
+  modelsDevAvailable: boolean
+): CachedModelEntry {
+  const prevHasUsableLimit =
+    prev &&
+    typeof prev.limit?.context === "number" &&
+    prev.limit.context > 0 &&
+    typeof prev.limit?.output === "number" &&
+    prev.limit.output > 0;
+  if (!modelsDevAvailable && !matchedModelsDev && prevHasUsableLimit) {
+    return prev;
+  }
+  return entry;
+}
+
+/**
+ * 解析缓存文件内容，返回模型数组；无法识别（旧格式/损坏/版本不符）时返回 null
+ */
+export function parseCachedModels(raw: string): CachedModelEntry[] | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      parsed.schemaVersion === CACHE_SCHEMA_VERSION &&
+      Array.isArray(parsed.models)
+    ) {
+      return parsed.models as CachedModelEntry[];
+    }
+    // 旧格式（裸数组）或版本不符 → 视为过期，交由调用方重建
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 解析单个 provider 的模型列表为可缓存的条目数组。
+ *
+ * 这是 `setup()` 扫描路径的核心逻辑，抽为纯函数以便测试：
+ *   - 权威 limit 解析（models.dev 优先）
+ *   - 字段级失败防护（models.dev 整体不可用时保留旧值）
+ *
+ * @param rawModels       远程探测到的原始模型列表
+ * @param modelsDevCache  models.dev 权威数据库
+ * @param options         过滤/命名/规则等配置
+ * @param prevEntries     上次缓存的条目（用于失败防护）
+ */
+export function resolveProviderModels(
+  rawModels: RawOpenAIModel[],
+  modelsDevCache: Map<string, ModelsDevModel> | undefined,
+  options: {
+    include?: string[];
+    exclude?: string[];
+    rules?: ModelRule[];
+    defaultLimit?: Partial<ModelLimit>;
+    smartModelName?: boolean;
+    shouldAppendProviderName?: boolean;
+    providerName?: string;
+  },
+  prevEntries?: CachedModelEntry[]
+): CachedModelEntry[] {
+  const modelsDevAvailable = Boolean(modelsDevCache && modelsDevCache.size > 0);
+
+  const prevById: Record<string, CachedModelEntry> = {};
+  for (const m of prevEntries || []) {
+    if (m && m.id) prevById[m.id] = m;
+  }
+
+  const result: CachedModelEntry[] = [];
+
+  for (const raw of rawModels) {
+    const modelId = raw.id;
+    if (!modelId) continue;
+
+    // 先查 models.dev：既用于过滤（模态判定），也用于能力映射
+    const devInfo =
+      modelsDevCache && modelsDevCache.size > 0
+        ? lookupModelsDev(modelId, modelsDevCache)
+        : undefined;
+
+    if (!shouldIncludeModel(raw, options.include, options.exclude, devInfo)) continue;
+
+    let name =
+      options.smartModelName !== false ? formatSmartModelName(modelId) : modelId;
+    if (options.shouldAppendProviderName) {
+      name = appendProviderNameToModelName(name, options.providerName);
+    }
+
+    const authoritative = resolveAuthoritativeLimit(raw, {
+      modelsDevCache,
+      rules: options.rules,
+      defaultLimit: options.defaultLimit,
+    });
+
+    result.push(
+      buildCachedEntry(
+        {
+          id: modelId,
+          name,
+          limit: authoritative.limit,
+          reasoning: authoritative.reasoning === true,
+          capabilities: resolveCapabilities(devInfo),
+        },
+        authoritative.matchedModelsDev,
+        prevById[modelId],
+        modelsDevAvailable
+      )
+    );
+  }
+
+  return result;
+}
 
 function getHomeDir(): string {
   return os.homedir() || process.env.USERPROFILE || process.env.HOME || "";
@@ -68,10 +222,16 @@ export default {
             }
           } catch {}
 
-          const files = fs.readdirSync(cacheDir).filter(f => f.endsWith("-models.json"));
+          const files = fs.readdirSync(cacheDir).filter((f: string) => f.endsWith("-models.json"));
           for (const file of files) {
             const providerId = file.replace(/-models\.json$/, "");
-            const cachedModels = JSON.parse(fs.readFileSync(path.join(cacheDir, file), "utf8"));
+            const cachedModels = parseCachedModels(
+              fs.readFileSync(path.join(cacheDir, file), "utf8")
+            );
+            if (!cachedModels) {
+              log(`Skipped stale/incompatible cache for [${providerId}] (schema mismatch or legacy format)`);
+              continue;
+            }
             log(`Loading ${cachedModels.length} cached models into [${providerId}]...`);
 
             const providerObj = config?.provider?.[providerId];
@@ -94,6 +254,10 @@ export default {
                 if (m.reasoning !== undefined) {
                   modelDef.reasoning = m.reasoning;
                 }
+                // 能力：OpenCode V2 的 Model.Info 唯一有效位置
+                if (m.capabilities) {
+                  modelDef.capabilities = m.capabilities;
+                }
               });
             }
           }
@@ -111,6 +275,10 @@ export default {
         const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 
         let needsReload = false;
+
+        // 预热 models.dev 权威数据库（仅一次，失败返回空 Map 不阻塞）
+        const modelsDevCache = await fetchModelsDevData();
+        log(`models.dev cache loaded: ${modelsDevCache ? modelsDevCache.size : 0} keys`);
 
         for (const [providerId, providerObj] of Object.entries(config.provider || {})) {
           const provider = providerObj as any;
@@ -160,7 +328,6 @@ export default {
             log(`Fetched ${rawModels.length} raw models for [${providerId}]`);
 
             // 处理模型列表
-            const processedModels = [];
             const shouldAppendProviderName = Boolean(
               discovery.showProviderName || discovery.appendProviderName
             );
@@ -168,45 +335,41 @@ export default {
               ? provider.name.trim()
               : providerId;
 
-            for (const raw of rawModels) {
-              const modelId = raw.id;
-              if (!modelId) continue;
-
-              // 过滤逻辑
-              if (!shouldIncludeModel(raw, discovery.include, discovery.exclude)) {
-                continue;
+            // 读取旧缓存用于字段级失败防护（格式不符则为空）
+            const cacheFilePath = path.join(getCacheDir(), `${providerId}-models.json`);
+            let prevEntries: CachedModelEntry[] | undefined;
+            try {
+              if (fs.existsSync(cacheFilePath)) {
+                prevEntries = parseCachedModels(fs.readFileSync(cacheFilePath, "utf8")) || undefined;
               }
+            } catch {}
 
-              // 展示名
-              let name = discovery.smartModelName !== false
-                ? formatSmartModelName(modelId)
-                : modelId;
+            const processedModels = resolveProviderModels(
+              rawModels,
+              modelsDevCache,
+              {
+                include: discovery.include,
+                exclude: discovery.exclude,
+                rules: discovery.rules,
+                defaultLimit: discovery.defaultLimit,
+                smartModelName: discovery.smartModelName,
+                shouldAppendProviderName,
+                providerName,
+              },
+              prevEntries
+            );
 
-              if (shouldAppendProviderName) {
-                name = appendProviderNameToModelName(name, providerName);
-              }
-
-              // 推断 limits
-              const limitResult = resolveModelLimit(
-                raw,
-                discovery.rules,
-                discovery.defaultLimit
-              );
-
-              processedModels.push({
-                id: modelId,
-                name,
-                limit: limitResult.limit,
-                reasoning: limitResult.reasoning
-              });
-            }
-
-            // 保存到独立缓存
+            // 保存到独立缓存（带 schema 版本号，便于格式演进时自动失效）
             const cacheDir = getCacheDir();
             if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+            const payload: CachedModelsPayload = {
+              schemaVersion: CACHE_SCHEMA_VERSION,
+              updatedAt: Date.now(),
+              models: processedModels,
+            };
             fs.writeFileSync(
-              path.join(cacheDir, `${providerId}-models.json`),
-              JSON.stringify(processedModels, null, 2),
+              cacheFilePath,
+              JSON.stringify(payload, null, 2),
               "utf8"
             );
 
