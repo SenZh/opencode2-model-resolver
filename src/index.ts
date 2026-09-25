@@ -213,7 +213,7 @@ export function resolveProviderModels(
 }
 
 function getHomeDir(): string {
-  return os.homedir() || process.env.USERPROFILE || process.env.HOME || "";
+  return process.env.USERPROFILE || process.env.HOME || os.homedir() || "";
 }
 
 function getCacheDir(): string {

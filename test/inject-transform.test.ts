@@ -11,6 +11,7 @@ const savedHome = process.env.HOME;
 beforeAll(() => {
   process.env.USERPROFILE = tmpHome;
   process.env.HOME = tmpHome;
+  os.homedir = () => tmpHome;
 });
 
 afterAll(() => {
