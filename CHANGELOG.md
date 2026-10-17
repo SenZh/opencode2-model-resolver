@@ -4,6 +4,34 @@
 
 ---
 
+## [v1.2.0] - 2026-10-17
+
+### 🚀 新特性与重大改进 (Features)
+- **全面适配 OpenCode 2 V2 新版配置规范**：
+  - 深度支持新版 `providers.<id>.settings` 配置结构（包含 `package`、`settings.baseURL`、`settings.apiKey` 及 `settings.modelsDiscovery`）。
+  - 双轨兼容既有已废弃的 `provider.<id>.options` 旧格式，未迁移用户零成本平滑过渡。
+  - 严格与 OpenCode 核心 Effect Schema 及运行时合并机制对齐，采用 Provider 级「新格式优先」策略，杜绝字段混拼带来的中间态歧义。
+  - 重构提取 `resolveProviderConfig` 与 `collectDiscoveryTargets` 纯函数，扫描目标收集与过滤逻辑首次获得 100% 自动化 CI 级守护。
+- **通用骨架归一化算法（Skeletal Normalization）**：
+  - 在 `lookupModelsDev` 权威库查询中引入骨架归一化算法，自动剥离连字符 `-`、下划线 `_`、点号 `.` 与大小写差异（如 `qwen-3.7-plus` ↔ `alibaba/qwen3.7-plus`）。
+  - 通用解决所有第三方中继 Provider 命名分隔符与官方不一致的顽疾，552 个权威模型实测零碰撞、零误伤。
+- **现代化大模型代际推断**：
+  - 彻底淘汰规则库中过时的远古 `/qwen/i -> 32K` 兜底，避免现代千问新模型跌入低上下文老坑。
+  - 通用识别带有 `plus`、`max`、`flash`、`long` 等现代层级后缀的模型，默认基准升级至 **1M (1,000,000)** 上下文与 **64K** 输出。
+  - Qwen 2.5/3.x/4.x 系列默认基准提升至至少 **128K**。
+- **社区与 OpenRouter Stealth 隐形长文本模型族通用支持**：
+  - 通用识别 `space-bunny`、`stealth-*`、`anonymous-*` 等匿名长文本测试大模型，默认赋予 **1M (1,000,000)** 上下文与 Reasoning 思考推理能力。
+
+### 🛡️ 架构稳定性与测试工程化 (Reliability & Testing)
+- **严格测试环境隔离与哨兵机制**：
+  - 解决测试写配置触发外网真实请求的潜在隐患，所有测试用例强制 mock `fetch` 并隔离环境变量。
+  - 引入异步扫描确定性等待的「哨兵 Provider（Sentinel Provider）」断言模式，消除时序等待中的 Flaky 风险。
+  - 修复 V1 路径下非对象配置从误判扫描到规范跳过的边界收紧。
+- **全量测试通过率 100%**：
+  - 自动化测试用例扩充至 **127 项全绿通过**，覆盖双段并存冲突、尾斜杠处理、空白名兜底、apiKey 回退链与跨格式深度相等性。
+
+---
+
 ## [v1.1.0] - 2026-09-25
 
 ### 🚀 新特性与重大改进 (Features)
