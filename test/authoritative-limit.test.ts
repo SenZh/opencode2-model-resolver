@@ -89,6 +89,22 @@ describe("resolveAuthoritativeLimit — models.dev 优先合并", () => {
     expect(res.limit.output).toBe(64000);
     expect(res.matchedModelsDev).toBe(true);
   });
+
+  it("版本边界防护：kimi-k2.7 绝不能误匹配为初代 kimi-k2（跨版本数字边界阻断）", () => {
+    const cacheWithK2 = makeCache({
+      "moonshotai/kimi-k2": {
+        id: "moonshotai/kimi-k2",
+        name: "Kimi K2",
+        reasoning: false,
+        limit: { context: 131072, output: 98304 },
+      },
+    });
+    // 骨架前缀防护阻断命中 kimi-k2，回落规则库解析为 K2.7 专属规格 262144
+    const res = resolveAuthoritativeLimit({ id: "kimi-k2.7" }, { modelsDevCache: cacheWithK2 });
+    expect(res.limit.context).toBe(262144);
+    expect(res.limit.output).toBe(262144);
+    expect(res.matchedModelsDev).toBe(false);
+  });
 });
 
 describe("resolveAuthoritativeLimit — 边界与异常", () => {

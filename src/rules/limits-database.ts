@@ -92,6 +92,18 @@ const KNOWN_MODEL_RULES: PredefinedModelRule[] = [
 
   // --- Kimi / Moonshot 系列 ---
   {
+    // Kimi K3 系列（1M 上下文）
+    pattern: /kimi.*k3/i,
+    limit: { context: 1048576, output: 131072 },
+    reasoning: true,
+  },
+  {
+    // Kimi K2.5 / K2.6 / K2.7 / K2.8 现代代际基准（256K 上下文与输出）
+    pattern: /kimi.*k2\.[5-9]/i,
+    limit: { context: 262144, output: 262144 },
+    reasoning: true,
+  },
+  {
     pattern: /moonshot-v1-128k|kimi.*128k/i,
     limit: { context: 131072, output: 8192 },
   },

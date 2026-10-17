@@ -97,4 +97,15 @@ describe("智能上下文推断规则测试 (limits-database)", () => {
     expect(stealth.limit.context).toBe(1000000);
     expect(stealth.reasoning).toBe(true);
   });
+
+  it("应准确识别 Kimi 现代代际（K2.7 为 256K / 256K，K3 为 1M）", () => {
+    const k27 = resolveModelLimit({ id: "kimi-k2.7" });
+    expect(k27.limit.context).toBe(262144);
+    expect(k27.limit.output).toBe(262144);
+    expect(k27.reasoning).toBe(true);
+
+    const k3 = resolveModelLimit({ id: "kimi-k3-preview" });
+    expect(k3.limit.context).toBe(1048576);
+    expect(k3.limit.output).toBe(131072);
+  });
 });

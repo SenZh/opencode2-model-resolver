@@ -144,6 +144,14 @@ export function lookupModelsDev(
     for (const [key, value] of cache.entries()) {
       const keySkeletal = normalizeSkeletalKey(key);
       if (keySkeletal.length >= 5 && targetSkeletal.startsWith(keySkeletal)) {
+        // 版本边界守卫：如果父 key 结尾是数字，target 紧随其后的字符不能是数字
+        // 杜绝跨子版本误继承（如 kimik2.7 误匹配 kimik2，gpt4.5 误匹配 gpt4）
+        const lastCharOfKey = keySkeletal[keySkeletal.length - 1];
+        const nextCharOfTarget = targetSkeletal[keySkeletal.length];
+        if (/\d/.test(lastCharOfKey) && /\d/.test(nextCharOfTarget)) {
+          continue;
+        }
+
         return {
           ...value,
           name: undefined,
