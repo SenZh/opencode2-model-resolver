@@ -8,6 +8,10 @@ import { fetchModelsDevApiData } from "./fetcher/models-dev-api.js";
 import type { ModelCost, PreIndexedCostTables } from "./fetcher/models-dev-api.js";
 import { resolveModelCost } from "./rules/cost.js";
 import {
+  resolveProviderConfig,
+  collectDiscoveryTargets,
+} from "./rules/provider-config.js";
+import {
   formatSmartModelName,
   appendProviderNameToModelName,
   shouldIncludeModel,
@@ -289,13 +293,10 @@ export default {
             }
             log(`Loading ${cachedModels.length} cached models into [${providerId}]...`);
 
-            const providerObj = config?.provider?.[providerId];
-            const discovery = providerObj?.options?.modelsDiscovery;
+            const resolvedConfig = resolveProviderConfig(providerId, config);
+            const discovery = resolvedConfig.discovery;
             const shouldAppend = Boolean(discovery?.showProviderName || discovery?.appendProviderName);
-            const providerName =
-              typeof providerObj?.name === "string" && providerObj.name.trim()
-                ? providerObj.name.trim()
-                : providerId;
+            const providerName = resolvedConfig.name;
 
             for (const m of cachedModels) {
               providers.models.update(providerId, m.id, (modelDef: any) => {
@@ -378,18 +379,13 @@ export default {
           }`
         );
 
-        for (const [providerId, providerObj] of Object.entries(config.provider || {})) {
-          const provider = providerObj as any;
-          const discovery = provider?.options?.modelsDiscovery;
-          if (!discovery || discovery.enabled === false) {
-            continue;
-          }
-
+        for (const { providerId, config: providerConfig, discovery } of collectDiscoveryTargets(config)) {
           log(`Discovered provider [${providerId}] with modelsDiscovery enabled`);
+          log(`Provider [${providerId}] config source: ${providerConfig.source}`);
 
-          // 获取 API Key
-          const apiKey = provider.options?.apiKey || resolveSystemApiKey(providerId);
-          const baseURL = (provider.options?.baseURL || "").replace(/\/+$/, "");
+          // 获取 API Key（配置未提供时回退系统凭据/环境变量）
+          const apiKey = providerConfig.apiKey || resolveSystemApiKey(providerId);
+          const baseURL = providerConfig.baseURL;
           if (!baseURL) {
             log(`Provider [${providerId}] baseURL is missing, skipping`);
             continue;
@@ -429,10 +425,7 @@ export default {
             const shouldAppendProviderName = Boolean(
               discovery.showProviderName || discovery.appendProviderName
             );
-            const providerName =
-              typeof provider.name === "string" && provider.name.trim()
-                ? provider.name.trim()
-                : providerId;
+            const providerName = providerConfig.name;
 
             // 读取旧缓存用于字段级失败防护（兼容 schemaVersion >= 2 确保跨版本迁移断网防护）
             const cacheFilePath = path.join(getCacheDir(), `${providerId}-models.json`);

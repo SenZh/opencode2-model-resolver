@@ -73,4 +73,28 @@ describe("智能上下文推断规则测试 (limits-database)", () => {
     const unknown = resolveModelLimit({ id: "some-completely-unknown-model" });
     expect(unknown.limit.context).toBe(FALLBACK_MODEL_LIMIT.context);
   });
+
+  it("应准确识别现代 Qwen 系列（Plus / Max / Flash / Long）的 1M 上下文基线", () => {
+    const qwenPlus = resolveModelLimit({ id: "qwen-3.7-plus" });
+    expect(qwenPlus.limit.context).toBe(1000000);
+    expect(qwenPlus.limit.output).toBe(65536);
+    expect(qwenPlus.reasoning).toBe(true);
+
+    const qwenMax = resolveModelLimit({ id: "qwen3.8-max" });
+    expect(qwenMax.limit.context).toBe(1000000);
+
+    const qwenNormal = resolveModelLimit({ id: "qwen3-7b" });
+    expect(qwenNormal.limit.context).toBe(131072);
+  });
+
+  it("应准确识别 Space Bunny 等社区 Stealth 隐形长文本模型（1M + 推理思考）", () => {
+    const bunny = resolveModelLimit({ id: "space-bunny" });
+    expect(bunny.limit.context).toBe(1000000);
+    expect(bunny.limit.output).toBe(65536);
+    expect(bunny.reasoning).toBe(true);
+
+    const stealth = resolveModelLimit({ id: "stealth-model-alpha" });
+    expect(stealth.limit.context).toBe(1000000);
+    expect(stealth.reasoning).toBe(true);
+  });
 });

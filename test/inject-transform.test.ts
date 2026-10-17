@@ -227,3 +227,123 @@ describe("注入端 transform 写入 capabilities 与 cost (TC-INJECT)", () => {
     expect(state.get("legacy-provider/old-model")).toBeUndefined();
   });
 });
+
+describe("注入端 transform 读取 V2/V1 两种配置格式 (TC-INJECT-V2/V1)", () => {
+  /**
+   * 写入指定 config 并触发一次 transform，返回注入结果。
+   *
+   * 注意：setup 会启动 fire-and-forget 扫描 IIFE，读到含 baseURL 的 config 后会发真实请求，
+   * 因此本块必须 mock globalThis.fetch（隔离铁律，见 test-plan.md）。
+   */
+  function injectWithConfig(config: unknown, providerId: string, modelId: string) {
+    const cfgDir = path.join(tmpHome, ".config", "opencode");
+    fs.mkdirSync(cfgDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(cfgDir, "opencode.json"),
+      JSON.stringify(config),
+      "utf8"
+    );
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [] }),
+    })) as any;
+
+    try {
+      const { state, editor } = makeProviderEditor();
+      let transformFn: any = null;
+      const mockCtx: any = {
+        provider: {
+          transform: (fn: any) => {
+            transformFn = fn;
+            return Promise.resolve({ dispose: async () => {} });
+          },
+          reload: async () => {},
+        },
+      };
+      plugin.setup(mockCtx);
+      transformFn(editor);
+      return state.get(`${providerId}/${modelId}`);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+
+  function seedCache(providerId: string, modelId: string) {
+    const cacheDir = path.join(tmpHome, ".cache", "opencode2-model-resolver");
+    fs.mkdirSync(cacheDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(cacheDir, `${providerId}-models.json`),
+      JSON.stringify({
+        schemaVersion: 3,
+        updatedAt: Date.now(),
+        models: [{ id: modelId, name: "Grok 4.7", limit: { context: 500000, output: 500000 } }],
+      }),
+      "utf8"
+    );
+  }
+
+  it("TC-INJECT-V2: 新格式 providers.<id>.settings 生效，展示名追加 (Name)", () => {
+    seedCache("v2prov", "grok-4.7");
+    const injected = injectWithConfig(
+      {
+        providers: {
+          v2prov: {
+            name: "TestProv",
+            settings: {
+              baseURL: "https://x/v1",
+              modelsDiscovery: { enabled: true, showProviderName: true },
+            },
+          },
+        },
+      },
+      "v2prov",
+      "grok-4.7"
+    );
+    expect(injected).toBeDefined();
+    expect(injected.name).toBe("Grok 4.7 (TestProv)");
+  });
+
+  it("TC-INJECT-V1: 旧格式 provider.<id>.options 行为不回归", () => {
+    seedCache("v1prov", "grok-4.7");
+    const injected = injectWithConfig(
+      {
+        provider: {
+          v1prov: {
+            name: "TestProv",
+            options: {
+              baseURL: "https://x/v1",
+              modelsDiscovery: { enabled: true, showProviderName: true },
+            },
+          },
+        },
+      },
+      "v1prov",
+      "grok-4.7"
+    );
+    expect(injected).toBeDefined();
+    expect(injected.name).toBe("Grok 4.7 (TestProv)");
+  });
+
+  it("TC-INJECT-V2-NOSUFFIX: 新格式未开 showProviderName 时不追加后缀", () => {
+    seedCache("v2nosuffix", "grok-4.7");
+    const injected = injectWithConfig(
+      {
+        providers: {
+          v2nosuffix: {
+            name: "TestProv",
+            settings: {
+              baseURL: "https://x/v1",
+              modelsDiscovery: { enabled: true },
+            },
+          },
+        },
+      },
+      "v2nosuffix",
+      "grok-4.7"
+    );
+    expect(injected.name).toBe("Grok 4.7");
+  });
+});

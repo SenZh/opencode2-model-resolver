@@ -87,6 +87,17 @@ export async function fetchModelsDevData(
   }
 }
 
+/**
+ * 将模型 ID 转换为规范骨架特征（Skeletal Key）：
+ * 1. 去除组织前缀与冒号标签（如 "alibaba/qwen-3.7-plus:latest" -> "qwen-3.7-plus"）
+ * 2. 转小写并剥离连字符、下划线、点号（如 "qwen-3.7-plus" -> "qwen37plus"）
+ * 使得连字符差异、点号差异（如 qwen-3.7-plus 与 qwen3.7-plus）自动归一化对齐。
+ */
+export function normalizeSkeletalKey(id: string): string {
+  const clean = id.replace(/:[a-zA-Z0-9_-]+$/, "").split("/").pop() || id;
+  return clean.toLowerCase().replace(/[-_.]/g, "");
+}
+
 export function lookupModelsDev(
   modelId: string,
   cache: Map<string, ModelsDevModel>
@@ -98,7 +109,7 @@ export function lookupModelsDev(
   // 1. 精确匹配
   if (cache.has(target)) return cache.get(target);
 
-  // 2. 匹配后缀
+  // 2. 匹配后缀（纯去掉常见组织前缀）
   for (const [key, value] of cache.entries()) {
     const keyModel = key.split("/").pop() || key;
     if (keyModel === target || keyModel === target.replace(/^(?:openai|anthropic|google|meta|deepseek)\//, "")) {
@@ -106,7 +117,18 @@ export function lookupModelsDev(
     }
   }
 
-  // 3. 前缀模糊匹配（例如 grok-4.7-build-fast 继承 grok-4.7 的 limits，但禁止覆盖展示名）
+  // 3. 通用骨架归一化精确匹配（彻底消除连字符、下划线、点号差异，如 qwen-3.7-plus ↔ qwen3.7-plus）
+  const targetSkeletal = normalizeSkeletalKey(target);
+  if (targetSkeletal.length >= 3) {
+    for (const [key, value] of cache.entries()) {
+      const keySkeletal = normalizeSkeletalKey(key);
+      if (targetSkeletal === keySkeletal) {
+        return value;
+      }
+    }
+  }
+
+  // 4. 前缀模糊匹配（例如 grok-4.7-build-fast 继承 grok-4.7 的 limits，但禁止覆盖展示名）
   for (const [key, value] of cache.entries()) {
     const keyModel = key.split("/").pop() || key;
     if (target.startsWith(keyModel + "-") || target.startsWith(keyModel + "/")) {
@@ -114,6 +136,19 @@ export function lookupModelsDev(
         ...value,
         name: undefined, // 模糊匹配不借用名称，确保变体模型保留专属名称
       };
+    }
+  }
+
+  // 5. 通用骨架前缀模糊匹配（例如 qwen-3.7-plus-preview 继承 qwen3.7-plus）
+  if (targetSkeletal.length >= 5) {
+    for (const [key, value] of cache.entries()) {
+      const keySkeletal = normalizeSkeletalKey(key);
+      if (keySkeletal.length >= 5 && targetSkeletal.startsWith(keySkeletal)) {
+        return {
+          ...value,
+          name: undefined,
+        };
+      }
     }
   }
 

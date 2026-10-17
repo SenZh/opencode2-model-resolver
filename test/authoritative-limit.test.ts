@@ -27,6 +27,18 @@ const REAL_CACHE = makeCache({
     reasoning: true,
     limit: { context: 1024000, output: 64000 },
   },
+  "alibaba/qwen3.7-plus": {
+    id: "alibaba/qwen3.7-plus",
+    name: "Qwen 3.7 Plus",
+    reasoning: true,
+    limit: { context: 1000000, output: 64000 },
+  },
+  "anthropic/claude-3.7-sonnet": {
+    id: "anthropic/claude-3.7-sonnet",
+    name: "Claude 3.7 Sonnet",
+    reasoning: true,
+    limit: { context: 200000, output: 64000 },
+  },
 });
 
 describe("resolveAuthoritativeLimit — models.dev 优先合并", () => {
@@ -62,6 +74,20 @@ describe("resolveAuthoritativeLimit — models.dev 优先合并", () => {
   it("input 字段应透传 models.dev 的值", () => {
     const res = resolveAuthoritativeLimit({ id: "gpt-5.6-luna" }, { modelsDevCache: REAL_CACHE });
     expect(res.limit.input).toBe(922000);
+  });
+
+  it("骨架归一化：带连字符的 qwen-3.7-plus 应命中 models.dev 的 alibaba/qwen3.7-plus（1M / 64K）", () => {
+    const res = resolveAuthoritativeLimit({ id: "qwen-3.7-plus" }, { modelsDevCache: REAL_CACHE });
+    expect(res.limit.context).toBe(1000000);
+    expect(res.limit.output).toBe(64000);
+    expect(res.matchedModelsDev).toBe(true);
+  });
+
+  it("骨架归一化：连字符格式差异 claude-3-7-sonnet 应命中 anthropic/claude-3.7-sonnet", () => {
+    const res = resolveAuthoritativeLimit({ id: "claude-3-7-sonnet" }, { modelsDevCache: REAL_CACHE });
+    expect(res.limit.context).toBe(200000);
+    expect(res.limit.output).toBe(64000);
+    expect(res.matchedModelsDev).toBe(true);
   });
 });
 

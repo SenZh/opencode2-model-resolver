@@ -1,5 +1,22 @@
 # 踩坑记录
 
+## 2026-10-17 — OpenCode 2 配置格式演化：providers.settings（新）与 provider.options（旧）的双段兼容
+
+### 现象
+用户报告插件没有生效，模型列表停止刷新。检查发现磁盘缓存停留在当天更早时刻，OpenCode 界面上模型一直存在但永远拉不到远端新增模型。
+
+### 根因
+1. OpenCode 2 的官方配置 Schema 已将旧版 `provider.<id>.options`（单数段）标记为 `deprecated: true`，演变为新版 `providers.<id>.settings`（复数段，包含 `package` 与 `settings`）。
+2. 用户配置被前端/OpenChamber 自动迁移到了新版 `providers` 复数段，而插件仍只硬编码遍历读取旧版 `config.provider`。导致扫描循环取不到任何 Discovery 目标，直接静默跳过。
+3. 注入端（Transform）冷启动读取本地磁盘缓存独立工作，掩盖了扫描早已静默中止的根因。
+
+### 关键教训
+1. **测试隔离铁律：在测试中写配置必须 mock fetch**。如果在测试临时目录写了包含有效 `baseURL` 的 `opencode.json` 并调用 `plugin.setup()`，必须同时对 `globalThis.fetch` 进行覆盖拦截。否则后台扫描的 fire-and-forget IIFE 会直接向外网发起真实网络请求，污染单测环境且依赖外网连通性。
+2. **异步扫描集成测试的确定性等待信号（哨兵 Provider 模式）**：当需要验证异步 fire-and-forget 逻辑时，绝不能依赖固定 `sleep`，也不能按请求总数计数（因为预热的公网请求会混入干扰）。最稳妥的方案是在测试配置末尾追加一个专用的哨兵 Provider（如 `__sentinel__`），轮询直到捕获该哨兵请求，即可 100% 确定目标批次的扫描循环已执行完毕。
+3. **两段同 ID 并存时的合并策略需与内核对齐**：经对 `opencode.exe` 二进制取证，内核在归一化配置时按 `Hs -> Md` 逻辑将两段合并，其真实行为是「新覆盖旧」。因此插件在提取配置时必须采用 Provider 级别的整段优先（新格式优先），杜绝字段级混拼带来的虚构中间态。
+
+---
+
 ## 2026-09-25 — 模型推理能力判定依赖 compatibility.reasoningField 而非顶层布尔
 
 ### 现象

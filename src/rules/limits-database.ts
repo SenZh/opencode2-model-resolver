@@ -35,7 +35,20 @@ const KNOWN_MODEL_RULES: PredefinedModelRule[] = [
     limit: { context: 131072, output: 8192 },
   },
 
+  // --- 社区 / OpenRouter Stealth 隐形长文本与测试模型族 ---
+  {
+    pattern: /space[-_]?bunny|stealth|anonymous/i,
+    limit: { context: 1000000, output: 65536 },
+    reasoning: true,
+  },
+
   // --- Qwen / 通义千问系列 ---
+  {
+    // 现代千问顶级长文本系列（Qwen 2.5/3.x/4.x 的 Plus, Max, Flash, Long 等）
+    pattern: /qwen.*(?:plus|max|flash|long)/i,
+    limit: { context: 1000000, output: 65536 },
+    reasoning: true,
+  },
   {
     pattern: /qwen(?:2\.5|3)?-coder-(?:32b|7b|14b|3b)/i,
     limit: { context: 131072, output: 16384 },
@@ -49,16 +62,17 @@ const KNOWN_MODEL_RULES: PredefinedModelRule[] = [
     limit: { context: 1048576, output: 8192 },
   },
   {
-    pattern: /qwen(?:2\.5|2)/i,
-    limit: { context: 131072, output: 8192 },
+    pattern: /qwen(?:2\.5|2|[3-9])/i,
+    limit: { context: 131072, output: 16384 },
   },
   {
     pattern: /qwen1\.5/i,
     limit: { context: 32768, output: 4096 },
   },
   {
+    // 通用现代 Qwen 兜底基准（不再是过小的 32K）
     pattern: /qwen/i,
-    limit: { context: 32768, output: 4096 },
+    limit: { context: 131072, output: 8192 },
   },
 
   // --- GLM / 智谱清言系列 ---
@@ -282,10 +296,11 @@ export function resolveModelLimit(
   // 3. 从模型名自身提取显式上下文数字（如 custom-256k, kimi-1m, qwen-128k）
   const explicitContext = extractContextFromExplicitName(modelId);
   if (explicitContext && explicitContext >= 4096) {
+    const isBigContext = explicitContext >= 524288;
     return {
       limit: {
         context: explicitContext,
-        output: 8192,
+        output: isBigContext ? 32768 : 8192,
       },
       reasoning: /-reasoner|-thinking|reasoning/i.test(modelId),
     };
