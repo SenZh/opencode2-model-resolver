@@ -84,6 +84,7 @@
 
 详细版本演进记录请见 [CHANGELOG.md](./CHANGELOG.md)。
 
+- **v1.2.1** (2026-10-17)：修复版本号数字边界导致的跨次版本错误降级问题；精准对齐 Kimi K2.7 等现代模型为 256K (262,144) 真实规格。
 - **v1.2.0** (2026-10-17)：全面支持 OpenCode 2 V2 新版配置规范（`providers.<id>.settings`）；新增骨架归一化算法（通用消除连字符/点号格式差异）；现代千问与大模型代际推断升级（Plus/Max 默认 1M）；社区 Stealth 隐形长文本模型族（Space Bunny 等）1M 与思考能力支持；核心扫描调度逻辑全自动化集成测试守护。
 - **v1.1.0** (2026-09-25)：接入 `models.dev/api.json` 官方参考定价；打通 `compatibility.reasoningField` 推理思考能力与标准推理深度档位（`variants`）；模态过滤与 `capabilities` 全量补齐；缓存升级为 `schemaVersion: 3`。
 - **v1.0.4** (2026-09-24)：接入 `models.dev` 权威限额数据库，修复上下文限额被错误归一化的问题；缓存版本化与字段级失败防护。
