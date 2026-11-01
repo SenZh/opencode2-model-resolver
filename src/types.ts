@@ -86,6 +86,11 @@ export interface PluginOptions {
    * 默认 5000ms
    */
   timeoutMs?: number;
+
+  /**
+   * 后台定时轮询探测周期（毫秒），默认 60000（1分钟）。设为 0 禁用后台自动轮询
+   */
+  refreshIntervalMs?: number;
 }
 
 /**

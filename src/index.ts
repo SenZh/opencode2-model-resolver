@@ -24,6 +24,12 @@ import type { ModelLimit, ModelRule, RawOpenAIModel } from "./types.js";
 /** 缓存文件 schema 版本号，格式变更时递增即可让旧缓存自动失效 */
 export const CACHE_SCHEMA_VERSION = 3;
 
+/** 默认后台静默定时轮询周期（毫秒）：60 秒 */
+export const DEFAULT_REFRESH_INTERVAL_MS = 60_000;
+
+/** 最低允许的轮询周期（毫秒）：5 秒（防止异常小数值造成高频风暴） */
+export const MIN_REFRESH_INTERVAL_MS = 5_000;
+
 export interface CachedModelEntry {
   id: string;
   name: string;
@@ -37,6 +43,80 @@ export interface CachedModelsPayload {
   schemaVersion: number;
   updatedAt: number;
   models: CachedModelEntry[];
+}
+
+/**
+ * 比较两个模型条目数组是否语义完全一致（用于热更新变化检测，避免无变动时空转重载）
+ */
+export function areModelEntriesEqual(
+  a?: CachedModelEntry[] | null,
+  b?: CachedModelEntry[] | null
+): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  if (a.length !== b.length) return false;
+
+  const mapA = new Map<string, CachedModelEntry>();
+  for (const item of a) {
+    if (item && item.id) mapA.set(item.id, item);
+  }
+
+  for (const item of b) {
+    if (!item || !item.id) return false;
+    const existing = mapA.get(item.id);
+    if (!existing) return false;
+    if (existing.name !== item.name) return false;
+    if (existing.reasoning !== item.reasoning) return false;
+    if (existing.limit?.context !== item.limit?.context) return false;
+    if (existing.limit?.output !== item.limit?.output) return false;
+    if (existing.limit?.input !== item.limit?.input) return false;
+    if (existing.cost?.input !== item.cost?.input) return false;
+    if (existing.cost?.output !== item.cost?.output) return false;
+    if (existing.cost?.cache_read !== item.cost?.cache_read) return false;
+    if (existing.cost?.cache_write !== item.cost?.cache_write) return false;
+    if (existing.capabilities?.tools !== item.capabilities?.tools) return false;
+
+    const inA = (existing.capabilities?.input || []).join(",");
+    const inB = (item.capabilities?.input || []).join(",");
+    if (inA !== inB) return false;
+
+    const outA = (existing.capabilities?.output || []).join(",");
+    const outB = (item.capabilities?.output || []).join(",");
+    if (outA !== outB) return false;
+  }
+
+  return true;
+}
+
+/**
+ * 解析活跃 targets 的全局轮询周期：
+ * - 取所有目标中最小的正整数周期（安全下限 5000ms）
+ * - 若所有目标都显式指定为 0，则返回 0（禁用轮询）
+ * - 未指定时回退 DEFAULT_REFRESH_INTERVAL_MS (60000ms)
+ */
+export function resolvePollingInterval(
+  targets: Array<{ discovery: { refreshIntervalMs?: number; pollIntervalMs?: number } }>
+): number {
+  if (targets.length === 0) return 0;
+  let minInterval: number | null = null;
+  let allExplicitlyDisabled = true;
+
+  for (const t of targets) {
+    const val = t.discovery.refreshIntervalMs ?? t.discovery.pollIntervalMs;
+    if (val === 0) {
+      continue;
+    }
+    allExplicitlyDisabled = false;
+    if (typeof val === "number" && val > 0) {
+      const clamped = Math.max(MIN_REFRESH_INTERVAL_MS, val);
+      if (minInterval === null || clamped < minInterval) {
+        minInterval = clamped;
+      }
+    }
+  }
+
+  if (allExplicitlyDisabled) return 0;
+  return minInterval ?? DEFAULT_REFRESH_INTERVAL_MS;
 }
 
 /**
@@ -361,131 +441,191 @@ export default {
       });
     }
 
-    // 2. 异步在后台扫描所有配置了 modelsDiscovery 的 Provider
-    (async () => {
+    // 2. 异步在后台执行首次扫描，并启动定时主动轮询器
+    let scanInFlight = false;
+    let pollTimer: any = null;
+
+    const runSafeScan = async (): Promise<boolean> => {
+      if (scanInFlight) return false;
+      scanInFlight = true;
+      try {
+        return await executeDiscoveryScan(ctx);
+      } finally {
+        scanInFlight = false;
+      }
+    };
+
+    // 立即启动首次扫描，并在完成后按配置周期启动后台轮询
+    void runSafeScan().then(() => {
       try {
         const configPath = path.join(getHomeDir(), ".config", "opencode", "opencode.json");
         if (!fs.existsSync(configPath)) return;
         const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-
-        let needsReload = false;
-
-        // 并行预热 models.dev 限额库和 api.json 价格表（失败安全降级，不阻塞核心主线）
-        const [modelsDevCache, costTables] = await Promise.all([
-          fetchModelsDevData(),
-          fetchModelsDevApiData(),
-        ]);
-        log(
-          `models.dev cache loaded: ${modelsDevCache ? modelsDevCache.size : 0} keys, costTables loaded: ${
-            costTables ? "yes" : "no"
-          }`
-        );
-
-        for (const { providerId, config: providerConfig, discovery } of collectDiscoveryTargets(config)) {
-          log(`Discovered provider [${providerId}] with modelsDiscovery enabled`);
-          log(`Provider [${providerId}] config source: ${providerConfig.source}`);
-
-          // 获取 API Key（配置未提供时回退系统凭据/环境变量）
-          const apiKey = providerConfig.apiKey || resolveSystemApiKey(providerId);
-          const baseURL = providerConfig.baseURL;
-          if (!baseURL) {
-            log(`Provider [${providerId}] baseURL is missing, skipping`);
-            continue;
+        const targets = collectDiscoveryTargets(config);
+        const interval = resolvePollingInterval(targets);
+        if (interval > 0) {
+          log(`Configuring background active polling timer: ${interval}ms`);
+          pollTimer = setInterval(() => {
+            void runSafeScan();
+          }, interval);
+          if (typeof pollTimer === "object" && typeof pollTimer.unref === "function") {
+            pollTimer.unref();
           }
-
-          const endpoint = discovery.endpoint || "/models";
-          const url = `${baseURL}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`;
-          const timeoutMs = discovery.timeoutMs || 30000;
-
-          log(`Fetching [${providerId}] models from ${url}...`);
-
-          try {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-            const headers: Record<string, string> = {};
-            if (apiKey) {
-              headers["Authorization"] = `Bearer ${apiKey}`;
-            }
-
-            const res = await fetch(url, {
-              headers,
-              signal: controller.signal,
-            });
-            clearTimeout(timer);
-
-            if (!res.ok) {
-              log(`Fetch [${providerId}] failed with status: ${res.status}`);
-              continue;
-            }
-
-            const json: any = await res.json();
-            const rawModels = json.data || (Array.isArray(json) ? json : []);
-            log(`Fetched ${rawModels.length} raw models for [${providerId}]`);
-
-            // 处理模型列表
-            const shouldAppendProviderName = Boolean(
-              discovery.showProviderName || discovery.appendProviderName
-            );
-            const providerName = providerConfig.name;
-
-            // 读取旧缓存用于字段级失败防护（兼容 schemaVersion >= 2 确保跨版本迁移断网防护）
-            const cacheFilePath = path.join(getCacheDir(), `${providerId}-models.json`);
-            let prevEntries: CachedModelEntry[] | undefined;
-            try {
-              if (fs.existsSync(cacheFilePath)) {
-                prevEntries =
-                  parseOldCachedModelsForFallback(fs.readFileSync(cacheFilePath, "utf8")) ||
-                  undefined;
-              }
-            } catch {}
-
-            const processedModels = resolveProviderModels(
-              rawModels,
-              modelsDevCache,
-              {
-                include: discovery.include,
-                exclude: discovery.exclude,
-                rules: discovery.rules,
-                defaultLimit: discovery.defaultLimit,
-                smartModelName: discovery.smartModelName,
-                shouldAppendProviderName,
-                providerName,
-              },
-              prevEntries,
-              costTables
-            );
-
-            // 保存到独立缓存（带 schemaVersion: 3）
-            const cacheDir = getCacheDir();
-            if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
-            const payload: CachedModelsPayload = {
-              schemaVersion: CACHE_SCHEMA_VERSION,
-              updatedAt: Date.now(),
-              models: processedModels,
-            };
-            fs.writeFileSync(
-              cacheFilePath,
-              JSON.stringify(payload, null, 2),
-              "utf8"
-            );
-
-            log(`Successfully processed and cached ${processedModels.length} models for [${providerId}]`);
-            needsReload = true;
-          } catch (fetchErr: any) {
-            log(`Error fetching models for [${providerId}]: ${fetchErr.message}`);
-          }
+        } else {
+          log("Background active polling is disabled (interval = 0)");
         }
-
-        // 如果获取到了新数据，触发 OpenCode2 reload 重新应用 transform
-        if (needsReload && ctx.provider && ctx.provider.reload) {
-          log("Triggering ctx.provider.reload() to apply fresh models...");
-          await ctx.provider.reload();
-          log("ctx.provider.reload() finished!");
-        }
-      } catch (err: any) {
-        log(`Background discovery cycle error: ${err.message}`);
+      } catch (e: any) {
+        log(`Failed to initialize background polling timer: ${e.message}`);
       }
-    })();
+    });
+
+    return () => {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
   },
 };
+
+/**
+ * 执行一轮完整的 Provider 远程模型扫描与权威限额/定价解析。
+ *
+ * @param ctx 插件上下文（支持 ctx.provider.reload()）
+ * @returns 是否有任何 Provider 的模型发生了实际变动并触发了重载
+ */
+export async function executeDiscoveryScan(ctx: any): Promise<boolean> {
+  try {
+    const configPath = path.join(getHomeDir(), ".config", "opencode", "opencode.json");
+    if (!fs.existsSync(configPath)) return false;
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+
+    const targets = collectDiscoveryTargets(config);
+    if (targets.length === 0) return false;
+
+    let needsReload = false;
+
+    // 并行预热 models.dev 限额库和 api.json 价格表（失败安全降级，不阻塞核心主线）
+    const [modelsDevCache, costTables] = await Promise.all([
+      fetchModelsDevData(),
+      fetchModelsDevApiData(),
+    ]);
+    log(
+      `models.dev cache loaded: ${modelsDevCache ? modelsDevCache.size : 0} keys, costTables loaded: ${
+        costTables ? "yes" : "no"
+      }`
+    );
+
+    for (const { providerId, config: providerConfig, discovery } of targets) {
+      log(`Discovered provider [${providerId}] with modelsDiscovery enabled`);
+      log(`Provider [${providerId}] config source: ${providerConfig.source}`);
+
+      // 获取 API Key（配置未提供时回退系统凭据/环境变量）
+      const apiKey = providerConfig.apiKey || resolveSystemApiKey(providerId);
+      const baseURL = providerConfig.baseURL;
+      if (!baseURL) {
+        log(`Provider [${providerId}] baseURL is missing, skipping`);
+        continue;
+      }
+
+      const endpoint = discovery.endpoint || "/models";
+      const url = `${baseURL}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`;
+      const timeoutMs = discovery.timeoutMs || 30000;
+
+      log(`Fetching [${providerId}] models from ${url}...`);
+
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+        const headers: Record<string, string> = {};
+        if (apiKey) {
+          headers["Authorization"] = `Bearer ${apiKey}`;
+        }
+
+        const res = await fetch(url, {
+          headers,
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+
+        if (!res.ok) {
+          log(`Fetch [${providerId}] failed with status: ${res.status}`);
+          continue;
+        }
+
+        const json: any = await res.json();
+        const rawModels = json.data || (Array.isArray(json) ? json : []);
+        log(`Fetched ${rawModels.length} raw models for [${providerId}]`);
+
+        // 处理模型列表
+        const shouldAppendProviderName = Boolean(
+          discovery.showProviderName || discovery.appendProviderName
+        );
+        const providerName = providerConfig.name;
+
+        // 读取旧缓存用于字段级失败防护与热更新变动比对
+        const cacheFilePath = path.join(getCacheDir(), `${providerId}-models.json`);
+        let prevEntries: CachedModelEntry[] | undefined;
+        try {
+          if (fs.existsSync(cacheFilePath)) {
+            prevEntries =
+              parseOldCachedModelsForFallback(fs.readFileSync(cacheFilePath, "utf8")) ||
+              undefined;
+          }
+        } catch {}
+
+        const processedModels = resolveProviderModels(
+          rawModels,
+          modelsDevCache,
+          {
+            include: discovery.include,
+            exclude: discovery.exclude,
+            rules: discovery.rules,
+            defaultLimit: discovery.defaultLimit,
+            smartModelName: discovery.smartModelName,
+            shouldAppendProviderName,
+            providerName,
+          },
+          prevEntries,
+          costTables
+        );
+
+        // 仅在模型清单实际变动（增、删、改名、限额/价格变更）或初次无缓存时写盘并标记 reload
+        const hasChanged = !areModelEntriesEqual(prevEntries, processedModels);
+        if (hasChanged) {
+          const cacheDir = getCacheDir();
+          if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+          const payload: CachedModelsPayload = {
+            schemaVersion: CACHE_SCHEMA_VERSION,
+            updatedAt: Date.now(),
+            models: processedModels,
+          };
+          fs.writeFileSync(
+            cacheFilePath,
+            JSON.stringify(payload, null, 2),
+            "utf8"
+          );
+
+          log(`[${providerId}] Models updated (${prevEntries?.length ?? 0} -> ${processedModels.length}), cache saved`);
+          needsReload = true;
+        } else {
+          log(`[${providerId}] Models unchanged (${processedModels.length} models), skipping reload`);
+        }
+      } catch (fetchErr: any) {
+        log(`Error fetching models for [${providerId}]: ${fetchErr.message}`);
+      }
+    }
+
+    // 如果获取到了新数据（或发生了实际变动），触发 OpenCode2 reload 重新应用 transform
+    if (needsReload && ctx.provider && ctx.provider.reload) {
+      log("Triggering ctx.provider.reload() to apply fresh models...");
+      await ctx.provider.reload();
+      log("ctx.provider.reload() finished!");
+      return true;
+    }
+  } catch (err: any) {
+    log(`Background discovery cycle error: ${err.message}`);
+  }
+  return false;
+}

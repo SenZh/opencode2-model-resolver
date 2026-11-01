@@ -16,6 +16,10 @@ export interface ModelsDiscoveryConfig {
   /** showProviderName 的别名 */
   appendProviderName?: boolean;
   modelInfoFormat?: string;
+  /** 后台定时轮询探测周期（毫秒），默认 60000（1分钟）。设为 0 禁用后台自动轮询 */
+  refreshIntervalMs?: number;
+  /** refreshIntervalMs 的别名 */
+  pollIntervalMs?: number;
 }
 
 /**
@@ -66,6 +70,12 @@ function pickDiscoveryConfig(raw: Record<string, unknown>): ModelsDiscoveryConfi
   if (typeof raw.showProviderName === "boolean") out.showProviderName = raw.showProviderName;
   if (typeof raw.appendProviderName === "boolean") out.appendProviderName = raw.appendProviderName;
   if (typeof raw.modelInfoFormat === "string") out.modelInfoFormat = raw.modelInfoFormat;
+  if (typeof raw.refreshIntervalMs === "number" && raw.refreshIntervalMs >= 0) {
+    out.refreshIntervalMs = raw.refreshIntervalMs;
+  }
+  if (typeof raw.pollIntervalMs === "number" && raw.pollIntervalMs >= 0) {
+    out.pollIntervalMs = raw.pollIntervalMs;
+  }
   return out;
 }
 
