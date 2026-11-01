@@ -104,15 +104,18 @@ export function lookupModelsDev(
 ): ModelsDevModel | undefined {
   if (cache.size === 0) return undefined;
 
-  const target = modelId.toLowerCase().replace(/:[a-zA-Z0-9_-]+$/, "");
-  
-  // 1. 精确匹配
-  if (cache.has(target)) return cache.get(target);
+  // 完整 id 用于命中 models.dev 的 "provider/model" 键（如 openai/gpt-4o）
+  const fullTarget = modelId.toLowerCase().replace(/:[a-zA-Z0-9_-]+$/, "");
+  // 实际模型名：剥离路由分组前缀（如 group/deepseek-v4.1-flash 的 group/）
+  const target = fullTarget.split("/").pop() || fullTarget;
 
-  // 2. 匹配后缀（纯去掉常见组织前缀）
+  // 1. 完整 id 精确匹配
+  if (cache.has(fullTarget)) return cache.get(fullTarget);
+
+  // 2. 实际模型名（尾段）精确匹配
   for (const [key, value] of cache.entries()) {
     const keyModel = key.split("/").pop() || key;
-    if (keyModel === target || keyModel === target.replace(/^(?:openai|anthropic|google|meta|deepseek)\//, "")) {
+    if (keyModel === target) {
       return value;
     }
   }
@@ -131,7 +134,7 @@ export function lookupModelsDev(
   // 4. 前缀模糊匹配（例如 grok-4.7-build-fast 继承 grok-4.7 的 limits，但禁止覆盖展示名）
   for (const [key, value] of cache.entries()) {
     const keyModel = key.split("/").pop() || key;
-    if (target.startsWith(keyModel + "-") || target.startsWith(keyModel + "/")) {
+    if (target.startsWith(keyModel + "-")) {
       return {
         ...value,
         name: undefined, // 模糊匹配不借用名称，确保变体模型保留专属名称

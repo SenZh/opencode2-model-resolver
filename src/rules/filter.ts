@@ -159,13 +159,21 @@ export function shouldIncludeModel(
 
 /**
  * 格式化更易读的模型展示名
+ *
+ * 斜杠前的分组前缀原样保留：中转/聚合类 provider 常用 `分组/模型` 命名
+ * （如 `456/DeepSeek`、`group/deepseek-v4.1-flash`），同一 provider 下
+ * 不同分组往往挂着同名模型，剥掉前缀会让多个模型的展示名完全相同、无法区分。
  */
 export function formatSmartModelName(modelId: string): string {
-  // 去除组织前缀，如 "deepseek-ai/DeepSeek-V3" -> "DeepSeek-V3"
-  const cleanId = modelId.includes("/") ? modelId.split("/").pop()! : modelId;
+  const lastSlash = modelId.lastIndexOf("/");
+  const prefix = lastSlash > 0 ? modelId.slice(0, lastSlash) : "";
+  const cleanId = lastSlash >= 0 ? modelId.slice(lastSlash + 1) : modelId;
+
+  // 形如 "abc/" 的退化 id：无模型名可格式化，原样返回
+  if (!cleanId) return modelId;
 
   // 转换常见短横线连词为首字母大写
-  return cleanId
+  const formatted = cleanId
     .split("-")
     .map((part) => {
       if (!part) return "";
@@ -175,6 +183,8 @@ export function formatSmartModelName(modelId: string): string {
       return part[0].toUpperCase() + part.slice(1);
     })
     .join(" ");
+
+  return prefix ? `${prefix}/${formatted}` : formatted;
 }
 
 /**

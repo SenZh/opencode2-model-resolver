@@ -1,5 +1,21 @@
 # 踩坑记录
 
+## 2026-11-01 — 展示名剥掉 `分组/模型` 前缀导致同 provider 下模型重名
+
+### 现象
+中转类 provider（CPA、magpie）返回 `group/deepseek-v4.1-flash` 与 `deepseek-v4.1-flash` 两条模型，界面上两条都显示成 `Deepseek V4.1 Flash (CPA)`，无法区分；用户自定义的 `456/DeepSeek` 分组前缀也整个消失。
+
+### 根因
+`formatSmartModelName`（`src/rules/filter.ts`）把 `/` 前的内容一律当作"组织前缀"丢弃（`modelId.split("/").pop()`）。该假设只对 `deepseek-ai/deepseek-chat` 这类官方组织前缀成立；对把"路由分组"编码进 id 的聚合型 provider，前缀正是唯一区分度，剥掉即重名。
+
+### 关键教训
+1. **展示名不允许信息丢失到无法区分实体**：格式化只能改写样式，不能删掉区分维度。多个 id 映射到同一展示名是设计缺陷，不是"名称更干净"。
+2. **前缀语义由 provider 决定，不能由 id 形状推断**：同一个 `a/b` 形状，既可能是厂商前缀，也可能是分组/路由标签。宁可保留（信息无损），也不要猜着删。
+3. **改展示名后缓存需重建**：`name` 落在 `{providerId}-models.json` 里，冷启动 transform 直接读缓存，只有下一次扫描成功才会刷新。
+4. **元数据匹配与展示名是两条链路，前缀处理口径必须一致**：展示名保留前缀后，若 `lookupModelsDev` / `resolveModelCost` 仍拿完整 id 匹配，会因"精确命中失败 → 骨架/尾段兜底"落到不同条目（实测 `group/deepseek-v4.1-flash` 与 `deepseek-v4.1-flash` 拿到两条不同价格）。正确做法：完整 id 精确匹配保留，随后立刻用剥离前缀的实际模型名再精确匹配一次。
+
+---
+
 ## 2026-10-17 — OpenCode 2 配置格式演化：providers.settings（新）与 provider.options（旧）的双段兼容
 
 ### 现象

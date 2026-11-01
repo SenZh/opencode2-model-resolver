@@ -122,6 +122,18 @@ describe("价格匹配解析器 (resolveModelCost)", () => {
     expect(cost?.input).toBe(0.2);
   });
 
+  it("TC-COST-13: 分组前缀不影响定价：group/x 与裸 x 命中同一价格", () => {
+    const grouped = resolveModelCost("group/gpt-5.6-luna", tables);
+    const plain = resolveModelCost("gpt-5.6-luna", tables);
+    expect(grouped).toBeDefined();
+    expect(grouped).toEqual(plain as any);
+    expect(grouped?.input).toBe(0.2);
+
+    // 非官方提供商：裸模型名精确命中优先于尾段兜底，分组前缀不得改变结果
+    const groupedHy3 = resolveModelCost("group/hy3", tables);
+    expect(groupedHy3).toEqual(resolveModelCost("hy3", tables) as any);
+  });
+
   it("TC-COST-12: 乱序场景下官方原厂前缀优先收录，不受第三方托管商抢占", () => {
     // 构造第三方排在最前面的乱序字典
     const reverseData = {

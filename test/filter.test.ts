@@ -23,18 +23,30 @@ describe("模型过滤与命名格式化测试 (filter)", () => {
     expect(shouldIncludeModel({ id: "qwen-vl-vision" }, undefined, exclude)).toBe(false);
   });
 
-  it("展示名应去除组织前缀并格式化", () => {
-    expect(formatSmartModelName("deepseek-ai/deepseek-chat")).toBe("Deepseek Chat");
+  it("展示名应保留斜杠前的分组前缀并格式化模型名", () => {
+    expect(formatSmartModelName("deepseek-ai/deepseek-chat")).toBe("deepseek-ai/Deepseek Chat");
     expect(formatSmartModelName("qwen-coder-32b")).toBe("Qwen Coder 32b");
     expect(formatSmartModelName("grok-4.7-build-fast")).toBe("Grok 4.7 Build Fast");
     expect(formatSmartModelName("gpt-image-2.5")).toBe("GPT Image 2.5");
+  });
+
+  it("同一模型在不同分组下展示名必须可区分", () => {
+    expect(formatSmartModelName("456/DeepSeek")).toBe("456/DeepSeek");
+    expect(formatSmartModelName("group/deepseek-v4.1-flash")).toBe("group/Deepseek V4.1 Flash");
+    expect(formatSmartModelName("deepseek-v4.1-flash")).toBe("Deepseek V4.1 Flash");
+    expect(formatSmartModelName("workbuddy-ai/deepseek-v4.1-flash"))
+      .toBe("workbuddy-ai/Deepseek V4.1 Flash");
+    // 多级前缀完整保留
+    expect(formatSmartModelName("a/b/model-x")).toBe("a/b/Model X");
+    // 退化 id 原样返回，不产生空名
+    expect(formatSmartModelName("456/")).toBe("456/");
   });
 
   it("支持在模型名称后追加 (providerName)，且模型 id 保持不变", () => {
     const rawId = "deepseek-ai/deepseek-chat";
     const smartName = formatSmartModelName(rawId);
     const withProvider = appendProviderNameToModelName(smartName, "Custom Provider");
-    expect(withProvider).toBe("Deepseek Chat (Custom Provider)");
+    expect(withProvider).toBe("deepseek-ai/Deepseek Chat (Custom Provider)");
     // 确保原始 id 未受影响
     expect(rawId).toBe("deepseek-ai/deepseek-chat");
 

@@ -37,8 +37,9 @@ export function resolveModelCost(
   const official = tables.officialMap.get(cleanId) ?? tables.officialMap.get(tailId);
   if (official) return { ...official };
 
-  // 2. 全局提供商精确匹配 (O(1))
-  const globalExact = tables.globalExactMap.get(cleanId);
+  // 2. 全局提供商精确匹配 (O(1))；带分组前缀的 id（如 group/deepseek-v4.1-flash）
+  //    必须与裸模型名（deepseek-v4.1-flash）命中同一条价格，分组前缀不参与定价匹配
+  const globalExact = tables.globalExactMap.get(cleanId) ?? tables.globalExactMap.get(tailId);
   if (globalExact) return { ...globalExact };
 
   // 3. 全局提供商尾段匹配 (O(1))
