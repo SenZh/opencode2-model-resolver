@@ -73,6 +73,7 @@
 | **`modelInfoFormat`** | `string` | `"models.dev"` | 元数据推断规范。可选 `"models.dev"` 等。结合权威数据源为模型匹配精确的上下文、输出限额与基准成本。 |
 | **`endpoint`** | `string` | `"/models"` | 获取模型列表的远端相对路径（默认基于 `baseURL` 请求 `/models`）。 |
 | **`timeoutMs`** | `number` | `30000` (30秒) | 远端请求超时阈值（毫秒）。网络较慢时可调大，超时自动回退使用本地缓存。 |
+| **`refreshIntervalMs`** | `number` | `60000` (60秒) | 后台静默定时轮询周期（毫秒）。遵循 OpenCode V2 规范在后台自动静默探测远端新增/变动模型，发生变动时全自动热同步重载；设置为 `0` 可完全关闭后台自动轮询。别名 `pollIntervalMs`。 |
 | **`models.includeBy`** | `Array<{field, match, equals}>` | `[]` | **高级过滤**：仅包含符合字段条件的模型（如 `[{ "field": "id", "match": "^deepseek" }]`）。 |
 | **`models.excludeBy`** | `Array<{field, match, equals}>` | `[]` | **高级过滤**：排除符合字段条件的模型（默认已自动过滤 embedding/rerank/tts 等非对话模型）。 |
 | **`rules`** *(增强扩展)* | `Array<Rule>` | `[]` | 用户自定义最高优先级规则库，用于覆盖指定模型的 `context` / `output` / `reasoning`。 |
