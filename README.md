@@ -68,7 +68,7 @@
 | 配置项 | 类型 | 默认值 | 作用说明 |
 | :--- | :--- | :--- | :--- |
 | **`enabled`** | `boolean` | `true` | 是否对该 Provider 开启自动发现。设置为 `false` 则跳过该 Provider。 |
-| **`smartModelName`** | `boolean` | `true` | 是否自动美化模型在 UI 界面上的名称（去除 `deepseek-ai/` 等组织前缀并规范格式）。 |
+| **`smartModelName`** | `boolean` | `true` | 是否自动美化模型在 UI 界面上的名称（规范大小写与连字符）。`/` 前的分组前缀原样保留（如 `group/deepseek-v4.1-flash` → `group/Deepseek V4.1 Flash`），避免同一 provider 下不同分组的同名模型展示重复；元数据（limit/capabilities/cost）匹配时仍以剥离前缀后的实际模型名为准。 |
 | **`showProviderName`** | `boolean` | `false` | 是否在模型展示名称后自动追加 `(providerName)`（如 `DeepSeek V3 (CPA)`），**模型 id 保持不变**。别名 `appendProviderName`。 |
 | **`modelInfoFormat`** | `string` | `"models.dev"` | 元数据推断规范。可选 `"models.dev"` 等。结合权威数据源为模型匹配精确的上下文、输出限额与基准成本。 |
 | **`endpoint`** | `string` | `"/models"` | 获取模型列表的远端相对路径（默认基于 `baseURL` 请求 `/models`）。 |

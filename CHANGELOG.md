@@ -4,6 +4,19 @@
 
 ---
 
+## [v1.2.2] - 2026-11-01
+
+### 🐛 Bug 修复 (Fixes)
+- **展示名保留 `分组/模型` 前缀**：
+  - 修复 `formatSmartModelName` 无条件剥掉 `/` 前缀导致的模型重名问题。中转型 provider 用 `分组/模型` 编码路由分组（如 `group/deepseek-v4.1-flash` 与 `deepseek-v4.1-flash`、`456/DeepSeek`），剥掉前缀后同一 provider 下多个模型展示名完全相同，无法区分。
+  - 现在前缀原样保留，仅对模型名部分做大小写与连字符格式化：`group/deepseek-v4.1-flash` → `group/Deepseek V4.1 Flash`，`456/DeepSeek` → `456/DeepSeek`；多级前缀 `a/b/model-x` → `a/b/Model X` 完整保留。
+  - 模型 id 不受影响；旧缓存中的名称会在下次成功扫描后自动刷新。
+- **元数据匹配以实际模型名为准，分组前缀不参与**：
+  - `lookupModelsDev` 与 `resolveModelCost` 原先用完整 id（含 `group/` 等分组前缀）做精确匹配，导致带前缀的模型要么退化到骨架/尾段兜底，要么落到另一条价格（如 `group/deepseek-v4.1-flash` 命中 0.15/0.6，而裸 `deepseek-v4.1-flash` 命中 0.3/1.2）。
+  - 现在完整 id 精确匹配仍优先（保留 `openai/gpt-4o` 这类官方键），但随后立即用剥离分组前缀后的实际模型名做精确匹配，保证 `group/x` 与裸 `x` 的 limit、capabilities、cost 完全一致。
+
+---
+
 ## [v1.2.1] - 2026-10-17
 
 ### 🐛 Bug 修复与通用边界加固 (Fixes & Guarding)
