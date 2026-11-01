@@ -1,6 +1,11 @@
 import { fetchRemoteModels } from "./fetcher/models-fetcher.js";
 import { fetchModelsDevData, lookupModelsDev } from "./fetcher/models-dev.js";
-import { formatSmartModelName, appendProviderNameToModelName, shouldIncludeModel } from "./rules/filter.js";
+import {
+  formatSmartModelName,
+  resolveModelDisplayName,
+  appendProviderNameToModelName,
+  shouldIncludeModel,
+} from "./rules/filter.js";
 import { resolveAuthoritativeLimit } from "./rules/limits-database.js";
 import { modelCacheStore } from "./store/cache-store.js";
 import fs from "fs";
@@ -118,7 +123,7 @@ export async function injectV2Catalog(
       let displayName =
         existing?.name ||
         devInfo?.name ||
-        (options.smartModelName !== false ? formatSmartModelName(modelID) : modelID);
+        resolveModelDisplayName(raw, { smartModelName: options.smartModelName });
 
       if (shouldAppendProviderName) {
         displayName = appendProviderNameToModelName(displayName, providerName);

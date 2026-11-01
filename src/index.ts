@@ -13,6 +13,7 @@ import {
 } from "./rules/provider-config.js";
 import {
   formatSmartModelName,
+  resolveModelDisplayName,
   appendProviderNameToModelName,
   shouldIncludeModel,
   resolveCapabilities,
@@ -179,8 +180,9 @@ export function resolveProviderModels(
 
     if (!shouldIncludeModel(raw, options.include, options.exclude, devInfo)) continue;
 
-    let name =
-      options.smartModelName !== false ? formatSmartModelName(modelId) : modelId;
+    let name = resolveModelDisplayName(raw, {
+      smartModelName: options.smartModelName,
+    });
     if (options.shouldAppendProviderName) {
       name = appendProviderNameToModelName(name, options.providerName);
     }

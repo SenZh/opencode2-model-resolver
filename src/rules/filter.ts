@@ -188,6 +188,57 @@ export function formatSmartModelName(modelId: string): string {
 }
 
 /**
+ * 解析并生成易读且不丢失分组信息的模型展示名
+ *
+ * 优先级策略：
+ * 1. smartModelName === false 时直接返回原始 modelId；
+ * 2. 优先采用 magpie_label（如 "DeepSeek-V4.1-Flash — routing group"），原生自带分组语义；
+ * 3. 其次采用 display_name / name（保留原生大小写与标点，如 "Gemini 3.8 Flash (Tiered)"）：
+ *    若原始 ID 含分组前缀且展示名尚未体现，自动拼上前缀（如 "antigravity/Gemini 3.8 Flash (Tiered)"），
+ *    防止同一 provider 下不同分组的模型同名冲突；若展示名只是纯小写 ID 则回退智能美化；
+ * 4. 兜底采用 formatSmartModelName(modelId) 做连字符与首字母大写格式化（保留分组前缀）。
+ */
+export function resolveModelDisplayName(
+  raw: RawOpenAIModel,
+  options?: { smartModelName?: boolean }
+): string {
+  const modelId = raw.id;
+  if (!modelId) return "";
+  if (options?.smartModelName === false) return modelId;
+
+  const lastSlash = modelId.lastIndexOf("/");
+  const prefix = lastSlash > 0 ? modelId.slice(0, lastSlash) : "";
+  const cleanId = lastSlash >= 0 ? modelId.slice(lastSlash + 1) : modelId;
+
+  // 1. 优先取 magpie_label
+  const magpieLabel = typeof raw.magpie_label === "string" ? raw.magpie_label.trim() : "";
+  if (magpieLabel && magpieLabel !== modelId && magpieLabel !== cleanId) {
+    return magpieLabel;
+  }
+
+  // 2. 其次取 display_name 或 name
+  const rawDisplay =
+    (typeof raw.display_name === "string" && raw.display_name.trim()) ||
+    (typeof raw.name === "string" && raw.name.trim()) ||
+    "";
+
+  if (rawDisplay && rawDisplay !== modelId) {
+    // 如果 rawDisplay 和 cleanId 纯全小写连字符相同，说明远端只是传了机器 ID，没有真正人类可读格式化
+    const isJustCleanId =
+      rawDisplay.toLowerCase() === cleanId.toLowerCase() && !/[A-Z\s()]/.test(rawDisplay);
+    if (!isJustCleanId) {
+      if (prefix && !rawDisplay.startsWith(`${prefix}/`)) {
+        return `${prefix}/${rawDisplay}`;
+      }
+      return rawDisplay;
+    }
+  }
+
+  // 3. 兜底使用 formatSmartModelName
+  return formatSmartModelName(modelId);
+}
+
+/**
  * 在模型名称末尾追加供应商名称，例如 "DeepSeek V3 (Custom Provider)"
  * 如果已有对应后缀则不会重复追加
  */

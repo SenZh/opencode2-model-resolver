@@ -93,6 +93,9 @@ export interface PluginOptions {
  */
 export interface RawOpenAIModel {
   id: string;
+  name?: string;
+  display_name?: string;
+  magpie_label?: string;
   object?: string;
   created?: number;
   owned_by?: string;
