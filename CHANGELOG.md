@@ -4,6 +4,16 @@
 
 ---
 
+## [v1.2.3] - 2026-11-01
+
+### 🚀 特性与改进 (Features & Polish)
+- **支持服务端原生展示名（`magpie_label` / `display_name`）与多级解析策略**：
+  - **优先采纳 `magpie_label`**：当服务端返回带有丰富语义标签的模型名称时（如 `DeepSeek-V4.1-Flash — routing group`、`Gemini 3.8 Flash (Tiered) — Antigravity`），直接作为首选展示名，既保留原生态大小写与标点，又天然区分分组归属。
+  - **按需补全 `display_name` 分组前缀**：当服务端只提供纯模型名的 `display_name`（如 `DeepSeek-V4.1-Flash`），若原始 ID 包含分组前缀（`group/`），自动拼装为 `group/DeepSeek-V4.1-Flash`，杜绝同名冲突。
+  - **优雅回退智能美化**：对于无上述字段的提供商（如 CPA）或仅返回机器 ID 的情况，平滑回退至保留分组前缀的智能美化算法（`formatSmartModelName`）。
+
+---
+
 ## [v1.2.2] - 2026-11-01
 
 ### 🐛 Bug 修复 (Fixes)
